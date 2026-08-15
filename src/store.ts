@@ -246,15 +246,40 @@ export function toCardPayload(n: Note): CardPayload {
 // ---- Export / import (to the VISIBLE folder) ----------------------------
 
 function safeName(n: Note): string {
-  return title(n).replace(/[^\w\- ]+/g, '').trim().slice(0, 40) || 'note';
+  return title(n).replace(/[^\w\- ]+/g, '').trim().slice(0, 40) || 'Untitled';
 }
 
-/** Write every note as its own .txt in the visible export folder. */
+/** Creation date+time — the discriminator so same-title notes don't overwrite. */
+function stamp(n: Note): string {
+  const d = new Date(n.createdAt || Date.now());
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+/** "<title> - <date time>" — unique enough that identical titles stay distinct. */
+function baseName(n: Note): string {
+  return `${safeName(n)} - ${stamp(n)}`;
+}
+
+/** Export a single note; returns the file path. */
+export async function exportOneTxt(note: Note): Promise<string> {
+  await StickyNative?.ensureDir(EXPORT_DIR);
+  const path = `${EXPORT_DIR}/${baseName(note)}.txt`;
+  await StickyNative?.writeFile(path, note.body);
+  return path;
+}
+
+/** Write every note as its own .txt, de-duplicating any exact name clash. */
 export async function exportAllTxt(): Promise<number> {
   await StickyNative?.ensureDir(EXPORT_DIR);
+  const used = new Map<string, number>();
   let n = 0;
   for (const note of cache) {
-    await StickyNative?.writeFile(`${EXPORT_DIR}/${safeName(note)}.txt`, note.body);
+    const base = baseName(note);
+    const seen = used.get(base) || 0;
+    used.set(base, seen + 1);
+    const name = seen === 0 ? base : `${base} (${seen + 1})`;
+    await StickyNative?.writeFile(`${EXPORT_DIR}/${name}.txt`, note.body);
     n++;
   }
   return n;

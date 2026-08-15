@@ -29,6 +29,7 @@ import {
   setFontKey,
   FontKey,
   exportAllTxt,
+  exportOneTxt,
   exportJson,
   importJson,
   title as noteTitle,
@@ -385,9 +386,7 @@ async function insertIntoNote(note: Note) {
 
 async function exportNote(note: Note) {
   try {
-    const safe = noteTitle(note).replace(/[^\w\- ]+/g, '').trim().slice(0, 40) || 'note';
-    const path = `${EXPORT_DIR}/${safe}.txt`;
-    await StickyNative?.writeFile(path, note.body);
+    const path = await exportOneTxt(note);
     toast(`Exported to ${path}`);
   } catch (e) {
     toast(`Export error: ${(e as Error)?.message}`);
