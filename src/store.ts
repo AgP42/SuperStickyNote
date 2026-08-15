@@ -208,6 +208,21 @@ export function setOpen(id: string, open: boolean): void {
   update(id, {open});
 }
 
+/**
+ * Give a not-yet-placed note a cascade position (stepped down-right from the
+ * other open notes) so successive post-its fan out instead of stacking exactly.
+ * No-op once the note has a real position (created earlier / dragged).
+ */
+export function placeForOpen(id: string): void {
+  const n = cache.find(m => m.id === id);
+  if (!n || (n.x >= 0 && n.y >= 0)) return;
+  const slot = cache.filter(m => m.open && m.id !== id).length % 8;
+  const STEP = 60;
+  n.x = 60 + slot * STEP;
+  n.y = 150 + slot * STEP;
+  scheduleSave();
+}
+
 export function remove(id: string): void {
   cache = cache.filter(n => n.id !== id);
   scheduleSave();

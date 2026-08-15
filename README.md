@@ -5,7 +5,7 @@ floats over everything; tap it and a **post-it** appears on top of your notebook
 or document. Write with the keyboard, drag it around, keep several open at once —
 your thoughts land on the page without ever leaving what you were doing.
 
-![SuperStickyNote in action](docs/screenshots/hero.png)
+![SuperStickyNote demo](docs/superstickynote-demo.gif)
 
 ## Features
 

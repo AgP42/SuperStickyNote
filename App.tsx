@@ -25,6 +25,7 @@ import {
   update,
   remove,
   setOpen,
+  placeForOpen,
   getFontKey,
   setFontKey,
   FontKey,
@@ -149,6 +150,7 @@ const Manager = () => {
       return;
     }
     const n = create(icon);
+    placeForOpen(n.id);
     setOpen(n.id, true);
     setPicking(false);
     // Leave the panel → the new post-it floats on the canvas; tap it to type.
@@ -289,6 +291,7 @@ const NoteRow = ({note}: {note: Note}) => {
         toast(`Max ${MAX_CARDS} sticky notes on screen — close one first`);
         return;
       }
+      placeForOpen(note.id);
       setOpen(note.id, true);
       closeView();
     } else {

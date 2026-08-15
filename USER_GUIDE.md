@@ -28,6 +28,10 @@ allow "Display over other apps" for the plugin host.
 *Updating:* uninstall the old version first (Settings → Apps → Plugins), then add the
 new `.snplg`.
 
+> **After removing the plugin, the ✚ bubble stays on screen** until you **restart
+> the device** — the bubble is a system overlay owned by the plugin host, which keeps
+> it alive until the process is recycled. A reboot clears it.
+
 ---
 
 ## 2. The bubble
@@ -123,6 +127,8 @@ MyStyle/Plugins/SuperStickyNote/
 - **Text only** in this version — handwriting inside a post-it is not supported yet.
 - **8 post-its** can float at once; total notes are unlimited.
 - **Insert** works in **NOTE** files only (not documents), on the page you're viewing.
+- **Uninstalling leaves the ✚ bubble on screen** — **restart the device** to clear it
+  (it's a system overlay held by the plugin host).
 - If a post-it ever gets stuck after a firmware hiccup, force-stopping the plugin host
   (or restarting the device) clears any stray window.
 

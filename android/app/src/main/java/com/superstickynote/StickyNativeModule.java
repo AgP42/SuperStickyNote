@@ -4,7 +4,11 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -22,6 +26,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -151,13 +156,12 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                 removeBubbleInternal();
                 wm = (WindowManager) ctx.getSystemService(Context.WINDOW_SERVICE);
 
-                TextView glyph = new TextView(ctx);
+                ImageView glyph = new ImageView(ctx);
                 glyph.setTag(BUBBLE_TAG);
-                glyph.setText("✚");
-                glyph.setTextColor(Color.BLACK);
-                glyph.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
-                glyph.setGravity(Gravity.CENTER);
-                glyph.setPadding(dp(12), dp(8), dp(12), dp(8));
+                // Draw the icon ourselves (Canvas) — loading R.drawable inside the
+                // plugin host proved unreliable (rendered a broken-image bar).
+                glyph.setImageBitmap(makeBubbleIcon(dp(28)));
+                glyph.setPadding(dp(12), dp(12), dp(12), dp(12));
                 glyph.setBackground(roundedBg(Color.WHITE, Color.BLACK, dp(20), dp(3)));
 
                 bubbleParams = overlayParams();
@@ -410,6 +414,16 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                 emit("onCardEdited", m);
             }
         });
+        // Flip the window focusable as EARLY as possible (on touch-down), so the
+        // keyboard can open on this very tap. Doing it only on click-up lost the
+        // window-focus race and forced a second tap. We return false so the
+        // EditText still handles the tap (cursor placement + view focus).
+        bodyV.setOnTouchListener((v, ev) -> {
+            if (ev.getAction() == MotionEvent.ACTION_DOWN && !c.editing) {
+                setWindowFocusable(c, true);
+            }
+            return false;
+        });
         bodyV.setOnClickListener(v -> enterEdit(c));
         bodyV.setOnLongClickListener(v -> { toggleClipBar(c); return true; });
         // Auto-save when the post-it loses focus (tap the note, dismiss keyboard, …).
@@ -455,8 +469,9 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         // While editing the window carries FLAG_WATCH_OUTSIDE_TOUCH, so a tap
         // anywhere outside the post-it lands here as ACTION_OUTSIDE → commit + close.
         panel.setOnTouchListener((v, ev) -> {
-            if (ev.getAction() == MotionEvent.ACTION_OUTSIDE && c.editing) {
-                exitEdit(c, true);
+            if (ev.getAction() == MotionEvent.ACTION_OUTSIDE) {
+                logLine("ACTION_OUTSIDE editing=" + c.editing + " id=" + c.id);
+                if (c.editing) exitEdit(c, true);
             }
             return false;
         });
@@ -661,6 +676,19 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
 
     // ---- Inline edit (focusable toggle → soft keyboard) -------------------
 
+    private void setWindowFocusable(Card c, boolean focusable) {
+        try {
+            if (focusable) {
+                c.params.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                c.params.flags |= WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
+            } else {
+                c.params.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+                c.params.flags &= ~WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
+            }
+            if (wm != null) wm.updateViewLayout(c.view, c.params);
+        } catch (Exception ignored) {}
+    }
+
     private void enterEdit(Card c) {
         if (c.editing) return;
         if (editingId != null && !editingId.equals(c.id)) {
@@ -669,24 +697,31 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         }
         c.editing = true;
         editingId = c.id;
-        try {
-            c.params.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-            c.params.flags |= WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
-            wm.updateViewLayout(c.view, c.params);
-        } catch (Exception ignored) {}
+        setWindowFocusable(c, true); // usually already flipped on touch-down
         c.doneView.setVisibility(View.VISIBLE);
-        c.body.post(() -> {
-            c.body.setFocusableInTouchMode(true);
-            c.body.requestFocus();
-            c.body.setSelection(c.body.getText().length());
-            InputMethodManager imm = (InputMethodManager)
-                    getReactApplicationContext().getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) imm.showSoftInput(c.body, InputMethodManager.SHOW_FORCED);
-        });
+        c.body.setFocusableInTouchMode(true);
+        final InputMethodManager imm = (InputMethodManager)
+                getReactApplicationContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+        // The window's focus grant is asynchronous; fire a few attempts so the
+        // keyboard reliably opens on the FIRST tap whenever the grant lands.
+        for (int d : new int[] {0, 120, 280}) {
+            main.postDelayed(() -> {
+                if (!c.editing) return;
+                c.body.requestFocus();
+                c.body.setSelection(c.body.getText().length());
+                if (imm != null) imm.showSoftInput(c.body, InputMethodManager.SHOW_FORCED);
+            }, d);
+        }
+        // "Kick" the window once the keyboard has settled: re-applying the layout
+        // registers FLAG_WATCH_OUTSIDE_TOUCH so the FIRST tap outside dismisses it.
+        // (Without this the user had to move the card first to trigger the same
+        // updateViewLayout before outside-tap worked — device 2026-08-15.)
+        main.postDelayed(() -> { if (c.editing) setWindowFocusable(c, true); }, 450);
     }
 
     private void exitEdit(Card c, boolean emitText) {
         if (!c.editing) return;
+        logLine("exitEdit id=" + c.id + " emit=" + emitText);
         c.editing = false;
         if (c.id.equals(editingId)) editingId = null;
         try {
@@ -696,11 +731,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         } catch (Exception ignored) {}
         c.body.clearFocus();
         c.doneView.setVisibility(View.GONE);
-        try {
-            c.params.flags |= WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-            c.params.flags &= ~WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH;
-            wm.updateViewLayout(c.view, c.params);
-        } catch (Exception ignored) {}
+        setWindowFocusable(c, false);
         if (emitText) {
             WritableMap m = Arguments.createMap();
             m.putString("id", c.id);
@@ -856,6 +887,17 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         }
     }
 
+    /** Append a diagnostic line to the same log file the JS side uses. */
+    private void logLine(String s) {
+        try {
+            File f = new File("/storage/emulated/0/MyStyle/superstickynote-log.txt");
+            if (f.length() > 262_144) f.delete();
+            try (java.io.FileWriter w = new java.io.FileWriter(f, true)) {
+                w.write("[native] " + s + "\n");
+            }
+        } catch (Exception ignored) {}
+    }
+
     private static long leadingTs(String s) {
         int i = 0;
         while (i < s.length() && Character.isDigit(s.charAt(i))) i++;
@@ -901,6 +943,32 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                 PixelFormat.OPAQUE);
         lp.gravity = Gravity.TOP | Gravity.START;
         return lp;
+    }
+
+    /** Draw the Tabler "square-plus-2" glyph (rounded square, open corner + plus). */
+    private Bitmap makeBubbleIcon(int size) {
+        Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas cv = new Canvas(bmp);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setColor(Color.BLACK);
+        p.setStyle(Paint.Style.STROKE);
+        p.setStrokeWidth(size * 2f / 24f);
+        p.setStrokeCap(Paint.Cap.ROUND);
+        p.setStrokeJoin(Paint.Join.ROUND);
+        float s = size / 24f; // SVG viewBox is 24×24
+        Path path = new Path();
+        path.moveTo(12.5f * s, 21 * s);
+        path.lineTo(5 * s, 21 * s);
+        path.quadTo(3 * s, 21 * s, 3 * s, 19 * s);
+        path.lineTo(3 * s, 5 * s);
+        path.quadTo(3 * s, 3 * s, 5 * s, 3 * s);
+        path.lineTo(19 * s, 3 * s);
+        path.quadTo(21 * s, 3 * s, 21 * s, 5 * s);
+        path.lineTo(21 * s, 12.5f * s);
+        cv.drawPath(path, p);
+        cv.drawLine(16 * s, 19 * s, 22 * s, 19 * s, p); // plus —
+        cv.drawLine(19 * s, 16 * s, 19 * s, 22 * s, p); // plus |
+        return bmp;
     }
 
     private GradientDrawable roundedBg(int fill, int stroke, int radius, int strokeW) {

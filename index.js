@@ -22,6 +22,7 @@ import {
   setOpen,
   setGeometry,
   setSize,
+  placeForOpen,
   getOpen,
   toCardPayload,
 } from './src/store';
@@ -124,6 +125,7 @@ DeviceEventEmitter.addListener('onNewNote', async () => {
     return; // never drop an existing post-it to make room
   }
   const note = create(DEFAULT_ICON);
+  placeForOpen(note.id); // cascade offset so successive post-its fan out
   setOpen(note.id, true);
   try {
     await syncOpenCards();
