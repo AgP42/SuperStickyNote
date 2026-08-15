@@ -1,0 +1,10 @@
+{
+  "name": "SuperStickyNote",
+  "desc": "Floating sticky quick-notes for Supernote. A launcher bubble and up to 8 draggable post-it cards float over NOTE and DOC; tap to edit with the keyboard. Notes and .txt exports live in MyStyle/Plugin/SuperStickyNote.",
+  "iconPath": "assets/icon.png",
+  "versionName": "0.4.0",
+  "versionCode": "10",
+  "pluginID": "89zc2wykgjiw30i7",
+  "pluginKey": "SuperStickyNote",
+  "jsMainPath": "index"
+}
