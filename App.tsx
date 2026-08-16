@@ -280,6 +280,7 @@ const KofiFooter = () => (
 
 const NoteRow = ({note}: {note: Note}) => {
   const [pickIcon, setPickIcon] = useState(false);
+  const [editing, setEditing] = useState(false);
   const t = noteTitle(note);
   const snippet = note.body.replace(/\s+/g, ' ').trim().slice(0, 80);
 
@@ -329,12 +330,26 @@ const NoteRow = ({note}: {note: Note}) => {
           ))}
         </View>
       )}
-      {!!snippet && (
-        <Text style={styles.cardSnippet} numberOfLines={2}>
-          {snippet}
-        </Text>
+      {editing ? (
+        <TextInput
+          style={styles.rowEditor}
+          multiline
+          autoFocus
+          textAlignVertical="top"
+          placeholder="Type your note… (first line becomes the title)"
+          placeholderTextColor="#666"
+          defaultValue={note.body}
+          onChangeText={txt => update(note.id, {body: txt})}
+        />
+      ) : (
+        !!snippet && (
+          <Text style={styles.cardSnippet} numberOfLines={2}>
+            {snippet}
+          </Text>
+        )
       )}
       <View style={styles.actions}>
+        <Action label={editing ? 'Done' : 'Edit'} onPress={() => setEditing(e => !e)} />
         <Action label={note.open ? 'Close' : 'Open'} onPress={toggleOpen} />
         <Action label="Insert" onPress={() => insertIntoNote(note)} />
         <Action label="Export" onPress={() => exportNote(note)} />
@@ -438,6 +453,7 @@ const styles = StyleSheet.create({
   cardIcon: {fontSize: 18, marginRight: 8, color: BLACK},
   cardTitle: {flex: 1, fontSize: 17, fontWeight: '800', color: BLACK},
   cardSnippet: {color: BLACK, marginTop: 8, fontSize: 14},
+  rowEditor: {borderWidth: 2, borderColor: BLACK, padding: 10, marginTop: 8, fontSize: 16, color: BLACK, minHeight: 120},
   pill: {paddingHorizontal: 10, paddingVertical: 3, borderWidth: 2, borderColor: BLACK},
   pillOpen: {backgroundColor: BLACK},
   pillClosed: {backgroundColor: WHITE},
