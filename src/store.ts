@@ -24,6 +24,12 @@ export const FONT_SP: Record<FontKey, number> = {
   XXL: 38,
 };
 
+/** A font from MyStyle/fonts. `path === ''` means the system default. */
+export interface FontInfo {
+  name: string;
+  path: string;
+}
+
 export interface Note {
   id: string;
   icon: string;
@@ -34,6 +40,7 @@ export interface Note {
   w: number; // window px, -1 = default width
   h: number; // window px, -1 = auto height (wrap)
   collapsed: boolean;
+  labels: string[];
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
@@ -41,6 +48,7 @@ export interface Note {
 
 let cache: Note[] = [];
 let fontKey: FontKey = 'M';
+let fontSel = 'sans'; // 'sans' | 'serif' | 'mono' | a MyStyle/fonts path
 let loaded = false;
 let notesPath = '';
 let settingsPath = '';
@@ -103,11 +111,17 @@ export async function initStore(): Promise<void> {
     }
     const s = raw ? JSON.parse(raw) : {};
     if (s && FONT_SP[s.fontKey as FontKey]) fontKey = s.fontKey;
+    if (s && typeof s.font === 'string' && s.font) fontSel = s.font;
+    else if (s && typeof s.fontPath === 'string' && s.fontPath) fontSel = s.fontPath; // migrate
   } catch {}
   loaded = true;
 }
 
 // ---- Settings (global) --------------------------------------------------
+
+function saveSettings(): void {
+  StickyNative?.writeFile(settingsPath, JSON.stringify({fontKey, font: fontSel})).catch(() => {});
+}
 
 export function getFontKey(): FontKey {
   return fontKey;
@@ -119,8 +133,26 @@ export function fontSp(): number {
 
 export function setFontKey(k: FontKey): void {
   fontKey = k;
-  StickyNative?.writeFile(settingsPath, JSON.stringify({fontKey})).catch(() => {});
+  saveSettings();
   notify();
+}
+
+export function getFont(): string {
+  return fontSel;
+}
+
+export function setFont(sel: string): void {
+  fontSel = sel;
+  saveSettings();
+  notify();
+}
+
+/** RN fontFamily for a selection (Manager preview). Custom paths → undefined (RN can't load them). */
+export function rnFamily(sel: string = fontSel): string | undefined {
+  if (sel === 'sans') return 'sans-serif';
+  if (sel === 'serif') return 'serif';
+  if (sel === 'mono') return 'monospace';
+  return undefined;
 }
 
 function scheduleSave(): void {
@@ -168,6 +200,7 @@ export function create(icon: string): Note {
     w: -1,
     h: -1,
     collapsed: false,
+    labels: [],
     pinned: false,
     createdAt: now,
     updatedAt: now,
@@ -229,6 +262,13 @@ export function remove(id: string): void {
   notify();
 }
 
+/** Every distinct label used across notes, sorted. */
+export function allLabels(): string[] {
+  const s = new Set<string>();
+  for (const n of cache) for (const l of n.labels || []) s.add(l);
+  return Array.from(s).sort((a, b) => a.localeCompare(b));
+}
+
 // ---- Derived views ------------------------------------------------------
 
 export function title(n: Note): string {
@@ -255,6 +295,8 @@ export function toCardPayload(n: Note): CardPayload {
     h: n.h ?? -1,
     collapsed: !!n.collapsed,
     fontSize: fontSp(),
+    labels: n.labels || [],
+    font: fontSel,
   };
 }
 
@@ -307,14 +349,28 @@ export async function exportJson(): Promise<string> {
   return JSON_BACKUP;
 }
 
-/** Restore notes from the .json backup (replaces the current set). */
+/**
+ * Merge notes from the .json backup into the current set — **non-destructive**.
+ * Existing notes are kept as-is; only notes whose id isn't already present are
+ * added (imported as closed, so they don't blow the on-screen limit). Returns
+ * how many were added.
+ */
 export async function importJson(): Promise<number> {
   const raw = (await StickyNative?.readTextFile(JSON_BACKUP)) ?? '';
   if (!raw) throw new Error(`No backup at ${JSON_BACKUP}`);
   const arr = JSON.parse(raw);
   if (!Array.isArray(arr)) throw new Error('Backup is not a notes list');
-  cache = arr as Note[];
-  await flush(); // persist to the private data file immediately
+  const existing = new Set(cache.map(n => n.id));
+  let added = 0;
+  for (const n of arr as Note[]) {
+    if (!n) continue;
+    if (!n.id) n.id = `n_imp_${Date.now().toString(36)}_${(seq++).toString(36)}`;
+    if (existing.has(n.id)) continue; // never overwrite an existing note
+    existing.add(n.id);
+    cache.push({...n, open: false}); // add to the list, don't auto-float
+    added++;
+  }
+  await flush();
   notify();
-  return cache.length;
+  return added;
 }

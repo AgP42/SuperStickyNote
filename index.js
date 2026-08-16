@@ -12,7 +12,7 @@ import {AppRegistry, DeviceEventEmitter, Image, ToastAndroid} from 'react-native
 import App from './App';
 import {name as appName} from './app.json';
 
-import {PluginManager} from 'sn-plugin-lib';
+import {PluginManager, PluginCommAPI, PluginFileAPI} from 'sn-plugin-lib';
 import {StickyNative, MAX_CARDS, blog} from './src/native';
 import {DEFAULT_ICON} from './src/icons';
 import {
@@ -82,9 +82,11 @@ async function hideOverlay() {
 // Instead we hide only when the Manager view actually opens, and restore when
 // it closes — both signals we control explicitly below.
 
-/** Manager opening: pull the cards/bubble down so they don't sit over the panel. */
-global.__ssnHideOverlay = hideOverlay;
-/** Manager closed: bring the open post-its + bubble back. */
+// Post-its are system overlays and stay ON TOP of the Manager on purpose: it lets
+// the Manager preview fonts/size live and open a note without closing the panel.
+/** Reflect store changes onto the visible cards (called live from the Manager). */
+global.__ssnSyncCards = syncOpenCards;
+/** Restore the on-canvas world (used at boot and when the Manager closes). */
 global.__ssnRestoreOverlay = restoreOverlay;
 
 // Called by the Manager after the user grants the overlay permission.
@@ -157,11 +159,64 @@ DeviceEventEmitter.addListener('onCardResized', payload => {
   if (payload && payload.id) setSize(payload.id, payload.w, payload.h);
 });
 
+// Lasso → "Add to sticky": OCR the selection and drop it into a new post-it.
+async function handleLassoToSticky() {
+  try {
+    ToastAndroid.show('Recognizing…', ToastAndroid.SHORT);
+    const pathR = await PluginCommAPI.getCurrentFilePath();
+    const path = pathR && pathR.success ? pathR.result : null;
+    if (!path) {
+      ToastAndroid.show('No open note', ToastAndroid.SHORT);
+      return;
+    }
+    const pageR = await PluginCommAPI.getCurrentPageNum();
+    const page = pageR && pageR.success ? pageR.result : 1;
+    const sizeR = await PluginFileAPI.getPageSize(path, page);
+    const size = sizeR && sizeR.success ? sizeR.result : null;
+    if (!size) {
+      ToastAndroid.show('Could not read the page size', ToastAndroid.SHORT);
+      return;
+    }
+    const elR = await PluginCommAPI.getLassoElements();
+    const els = elR && elR.success ? elR.result : [];
+    if (!els || els.length === 0) {
+      ToastAndroid.show('Nothing selected', ToastAndroid.SHORT);
+      return;
+    }
+    // Full page size (NOT the lasso rect) or the recognizer throws.
+    const recR = await PluginCommAPI.recognizeElements(els, size);
+    for (const e of els) {
+      try {
+        e && e.recycle && e.recycle();
+      } catch {}
+    }
+    const text = recR && recR.success ? (recR.result || '').trim() : '';
+    if (!text) {
+      ToastAndroid.show('Nothing recognized', ToastAndroid.SHORT);
+      return;
+    }
+    const atLimit = getOpen().length >= MAX_CARDS;
+    const note = create(DEFAULT_ICON);
+    update(note.id, {body: text});
+    if (!atLimit) {
+      placeForOpen(note.id);
+      setOpen(note.id, true);
+      await syncOpenCards();
+    }
+    ToastAndroid.show(
+      atLimit ? 'Saved to a new sticky (screen full — see Manager)' : 'Added to a new sticky note',
+      ToastAndroid.SHORT,
+    );
+  } catch (e) {
+    blog(`[lasso] err: ${e && e.message}`);
+    ToastAndroid.show(`OCR error: ${e && e.message}`, ToastAndroid.SHORT);
+  }
+}
+
 // Tapping a card's icon opens the Manager (full list).
 DeviceEventEmitter.addListener('onOpenManager', async () => {
-  await hideOverlay(); // clear the cards/bubble before the panel appears
   try {
-    await PluginManager.showPluginView();
+    await PluginManager.showPluginView(); // cards stay on top of the Manager
   } catch (e) {
     blog(`[openmgr] err: ${e && e.message}`);
   }
@@ -175,18 +230,33 @@ PluginManager.addPluginLifeListener({
 
 // ---- Toolbar entry point --------------------------------------------------
 
+const TOOLBAR_BTN = 100;
+const LASSO_BTN = 200;
+
 PluginManager.registerButton(1, ['NOTE', 'DOC'], {
-  id: 100,
+  id: TOOLBAR_BTN,
   name: 'SuperStickyNote',
   icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
   showType: 1,
 });
 
+// Lasso toolbar button (NOTE only): OCR the selection into a new sticky.
+// showType:0 → act headless (no plugin view), we handle it in onButtonPress.
+PluginManager.registerButton(2, ['NOTE'], {
+  id: LASSO_BTN,
+  name: 'Add to sticky',
+  icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
+  editDataTypes: [0, 1, 2, 3, 4],
+  showType: 0,
+});
+
 PluginManager.registerButtonListener({
-  // showType:1 opens the plugin view (the Manager); hide the overlay so the
-  // cards/bubble don't float over it (restored when the Manager closes).
-  onButtonPress() {
+  onButtonPress(e) {
+    if (e && e.id === LASSO_BTN) {
+      handleLassoToSticky();
+      return;
+    }
+    // Toolbar (showType:1) opens the Manager; cards stay on top for live preview.
     blog('[btn] toolbar pressed');
-    hideOverlay();
   },
 });

@@ -87,6 +87,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         View view;
         TextView iconView;
         TextView titleView;
+        LinearLayout labelsBox;
         View dividerView;
         EditText body;
         View doneView;
@@ -259,6 +260,12 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                     String id = n.getString("id");
                     String icon = n.hasKey("icon") ? n.getString("icon") : "";
                     String body = n.hasKey("body") ? n.getString("body") : "";
+                    List<String> labels = new ArrayList<>();
+                    if (n.hasKey("labels") && !n.isNull("labels")) {
+                        com.facebook.react.bridge.ReadableArray la = n.getArray("labels");
+                        if (la != null) for (int k = 0; k < la.size(); k++) labels.add(la.getString(k));
+                    }
+                    String font = n.hasKey("font") && !n.isNull("font") ? n.getString("font") : "sans";
                     boolean collapsed = n.hasKey("collapsed") && n.getBoolean("collapsed");
                     int fontSp = n.hasKey("fontSize") && !n.isNull("fontSize")
                             ? n.getInt("fontSize") : DEFAULT_FONT_SP;
@@ -272,10 +279,11 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                     }
                     Card existing = cards.get(id);
                     if (existing != null) {
-                        updateCard(existing, icon, body, x, y, w, h, collapsed, fontSp);
+                        updateCard(existing, icon, body, labels, x, y, w, h, collapsed, fontSp);
                     } else {
-                        addCard(ctx, id, icon, body, x, y, w, h, collapsed, fontSp);
+                        addCard(ctx, id, icon, body, labels, x, y, w, h, collapsed, fontSp);
                     }
+                    applyFont(cards.get(id), font);
                 }
                 promise.resolve(true);
             } catch (Exception e) {
@@ -312,7 +320,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         });
     }
 
-    private void addCard(Context ctx, String id, String icon, String body,
+    private void addCard(Context ctx, String id, String icon, String body, List<String> labels,
                          int x, int y, int w, int h, boolean collapsed, int fontSp) {
         Card c = new Card();
         c.id = id;
@@ -326,7 +334,10 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         panel.setBackground(roundedBg(Color.WHITE, Color.BLACK, dp(10), dp(3)));
         panel.setPadding(dp(10), dp(8), dp(10), dp(10));
 
-        // Header: icon (→ manager) + title (first line) + ✓ done + ✕ close.
+        // Header (single row): icon (→ manager) · title · label chips · ✓ done · ✕ close.
+        // The title takes the leftover space (weight) so the label chips sit right
+        // after it and get clipped by the card edge when there's no room. Tapping
+        // the header (except icon/done/close) collapses/expands — labels are inert.
         LinearLayout header = new LinearLayout(ctx);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -350,6 +361,13 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                 new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
         header.addView(titleV, titleLP);
         c.titleView = titleV;
+
+        LinearLayout labelsBox = new LinearLayout(ctx);
+        labelsBox.setOrientation(LinearLayout.HORIZONTAL);
+        labelsBox.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(labelsBox, wrapLP());
+        c.labelsBox = labelsBox;
+        fillLabels(ctx, labelsBox, labels);
 
         TextView doneV = new TextView(ctx);
         doneV.setText("✓");
@@ -393,7 +411,10 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                 | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         bodyV.setSingleLine(false);
         bodyV.setMinLines(2);
-        bodyV.setMaxLines(8);
+        // No maxLines cap: the body fills the card's height (all lines that fit)
+        // and scrolls for the rest. Only cap the height when the card auto-sizes
+        // (not user-resized), so a long note doesn't grow the card off-screen.
+        if (!fixedH) bodyV.setMaxHeight(dp(260));
         bodyV.setVerticalScrollBarEnabled(true);
         c.muteWatcher = true;
         bodyV.setText(body);
@@ -504,6 +525,8 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                         emit("onCardMoved", m);
                     } else if (hitView(c.iconView, ev)) {
                         emit("onOpenManager", Arguments.createMap());
+                    } else if (hitView(c.labelsBox, ev)) {
+                        emit("onOpenManager", Arguments.createMap()); // tap labels → open Manager
                     } else if (hitView(c.doneView, ev)) {
                         exitEdit(c, true);
                     } else if (hitView(c.closeView, ev)) {
@@ -540,6 +563,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                             (LinearLayout.LayoutParams) c.body.getLayoutParams();
                     blp.height = 0; blp.weight = 1f;
                     c.body.setLayoutParams(blp);
+                    c.body.setMaxHeight(Integer.MAX_VALUE); // fill the resized height
                     try { wm.updateViewLayout(c.view, c.params); } catch (Exception ignored) {}
                     return true;
                 case MotionEvent.ACTION_MOVE:
@@ -570,11 +594,12 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         } catch (Exception ignored) {}
     }
 
-    private void updateCard(Card c, String icon, String body, int x, int y, int w, int h,
-                            boolean collapsed, int fontSp) {
+    private void updateCard(Card c, String icon, String body, List<String> labels,
+                            int x, int y, int w, int h, boolean collapsed, int fontSp) {
         try {
             c.iconView.setText(icon);
             c.titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSp);
+            if (c.labelsBox != null) fillLabels(c.labelsBox.getContext(), c.labelsBox, labels);
             c.body.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSp);
             if (!c.editing && !c.body.getText().toString().equals(body)) {
                 c.muteWatcher = true;
@@ -587,12 +612,61 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                 c.fixedHeight = h;
                 LinearLayout.LayoutParams blp = (LinearLayout.LayoutParams) c.body.getLayoutParams();
                 if (blp.weight != 1f) { blp.height = 0; blp.weight = 1f; c.body.setLayoutParams(blp); }
+                c.body.setMaxHeight(Integer.MAX_VALUE);
             }
             if (c.collapsed != collapsed) { c.collapsed = collapsed; }
             applyCollapse(c); // also applies height (fixedHeight vs wrap)
             c.params.x = x; c.params.y = y;
             wm.updateViewLayout(c.view, c.params);
         } catch (Exception ignored) {}
+    }
+
+    private static final Map<String, android.graphics.Typeface> fontCache = new HashMap<>();
+
+    /** Resolve a font selection to a Typeface: system keys, or a MyStyle/fonts path (cached). */
+    private android.graphics.Typeface fontFor(String sel) {
+        if (sel == null || sel.isEmpty() || "sans".equals(sel)) return android.graphics.Typeface.SANS_SERIF;
+        if ("serif".equals(sel)) return android.graphics.Typeface.SERIF;
+        if ("mono".equals(sel)) return android.graphics.Typeface.MONOSPACE;
+        android.graphics.Typeface tf = fontCache.get(sel);
+        if (tf == null) {
+            try { tf = android.graphics.Typeface.createFromFile(sel); }
+            catch (Exception e) { tf = android.graphics.Typeface.SANS_SERIF; }
+            fontCache.put(sel, tf);
+        }
+        return tf;
+    }
+
+    private void applyFont(Card c, String path) {
+        if (c == null) return;
+        android.graphics.Typeface tf = fontFor(path);
+        if (c.titleView != null) c.titleView.setTypeface(tf, android.graphics.Typeface.BOLD);
+        if (c.body != null) c.body.setTypeface(tf);
+    }
+
+    /** List usable font files in MyStyle/fonts as [{name, path}]. */
+    @ReactMethod
+    public void listFonts(Promise promise) {
+        try {
+            File dir = new File("/storage/emulated/0/MyStyle/fonts");
+            File[] files = dir.listFiles();
+            com.facebook.react.bridge.WritableArray out = Arguments.createArray();
+            if (files != null) {
+                java.util.Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+                for (File f : files) {
+                    String n = f.getName().toLowerCase();
+                    if (f.isFile() && (n.endsWith(".ttf") || n.endsWith(".otf"))) {
+                        WritableMap m = Arguments.createMap();
+                        m.putString("name", f.getName().replaceAll("(?i)\\.(ttf|otf)$", ""));
+                        m.putString("path", f.getAbsolutePath());
+                        out.pushMap(m);
+                    }
+                }
+            }
+            promise.resolve(out);
+        } catch (Exception e) {
+            promise.reject("LIST_FONTS_FAILED", e.getMessage(), e);
+        }
     }
 
     private void setCollapsed(Card c, boolean collapsed) {
@@ -641,6 +715,34 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
     private ClipboardManager clipboard() {
         return (ClipboardManager) getReactApplicationContext()
                 .getSystemService(Context.CLIPBOARD_SERVICE);
+    }
+
+    /** System clipboard access for the Manager editor (RN core no longer ships Clipboard). */
+    @ReactMethod
+    public void clipboardSet(String text, Promise promise) {
+        main.post(() -> {
+            try {
+                clipboard().setPrimaryClip(ClipData.newPlainText("supersticky", text == null ? "" : text));
+                promise.resolve(true);
+            } catch (Exception e) { promise.reject("CLIP_SET", e.getMessage(), e); }
+        });
+    }
+
+    @ReactMethod
+    public void clipboardGet(Promise promise) {
+        main.post(() -> {
+            try {
+                ClipboardManager cm = clipboard();
+                String out = "";
+                if (cm.hasPrimaryClip() && cm.getPrimaryClip() != null
+                        && cm.getPrimaryClip().getItemCount() > 0) {
+                    CharSequence cs = cm.getPrimaryClip().getItemAt(0)
+                            .coerceToText(getReactApplicationContext());
+                    out = cs == null ? "" : cs.toString();
+                }
+                promise.resolve(out);
+            } catch (Exception e) { promise.reject("CLIP_GET", e.getMessage(), e); }
+        });
     }
 
     private void doCopy(Card c) {
@@ -969,6 +1071,31 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         cv.drawLine(16 * s, 19 * s, 22 * s, 19 * s, p); // plus —
         cv.drawLine(19 * s, 16 * s, 19 * s, 22 * s, p); // plus |
         return bmp;
+    }
+
+    /** A rounded label chip matching the Manager's look (white fill, black outline). */
+    private TextView makeMiniChip(Context ctx, String text) {
+        TextView t = new TextView(ctx);
+        t.setText(text);
+        t.setTextColor(Color.BLACK);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        t.setSingleLine(true);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        t.setPadding(dp(7), dp(1), dp(7), dp(1));
+        t.setBackground(roundedBg(Color.WHITE, Color.BLACK, dp(999), dp(1)));
+        return t;
+    }
+
+    /** Rebuild the header's label chips (display only). */
+    private void fillLabels(Context ctx, LinearLayout box, List<String> labels) {
+        box.removeAllViews();
+        for (String l : labels) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.leftMargin = dp(4);
+            box.addView(makeMiniChip(ctx, l), lp);
+        }
+        box.setVisibility(labels.isEmpty() ? View.GONE : View.VISIBLE);
     }
 
     private GradientDrawable roundedBg(int fill, int stroke, int radius, int strokeW) {

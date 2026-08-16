@@ -13,6 +13,8 @@ export interface CardPayload {
   h: number;
   collapsed: boolean;
   fontSize: number; // sp
+  labels: string[]; // shown as chips in the card header (display only)
+  font: string; // font file path from MyStyle/fonts, or '' for system default
 }
 
 interface StickyNativeType {
@@ -28,6 +30,9 @@ interface StickyNativeType {
   writeFile(path: string, content: string): Promise<boolean>;
   readTextFile(path: string): Promise<string>;
   ensureDir(path: string): Promise<boolean>;
+  clipboardSet(text: string): Promise<boolean>;
+  clipboardGet(): Promise<string>;
+  listFonts(): Promise<Array<{name: string; path: string}>>;
   cleanupOldVersions(dirPath: string): Promise<{freed: number; kept: string}>;
   appendLog(text: string): Promise<boolean>;
 }
