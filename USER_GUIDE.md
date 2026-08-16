@@ -33,6 +33,7 @@ The **✚ bubble** is always within reach.
 
 - **Tap ✚** → creates a new sticky note and opens the keyboard right away.
 - **Drag** the bubble to move it anywhere.
+- Don't want it on screen? Hide it from **Manager → Configuration → Bubble** (see §4).
 
 ---
 
@@ -88,11 +89,17 @@ updates them **live**, and opening a note doesn't close the panel.
 
 ![Editing a note's icon and labels](docs/screenshots/edit-icon-labels.png)
 
-**Text size & Font** (bottom of the Manager):
+**Configuration** (bottom of the Manager) — tap the **▸ Configuration** line to expand it:
 
 - **Text size** — XS · S · M · L · XL · XXL, applied to every sticky note.
 - **Font** — **Sans / Serif / Mono**, plus any font you've dropped in `MyStyle/fonts`
   (e.g. handwriting fonts). Applies to the sticky note text.
+- **Bubble** — **Shown / Hidden**: hide the ✚ launcher bubble if you don't want it
+  floating over your pages. When it's hidden you still create notes with **＋ New note**
+  here, or with **lasso → Add to sticky**.
+
+The footer stays tidy: **Backup** is always visible, **Configuration** collapses to a
+single line, and the **Ko-fi** line sits at the very bottom.
 
 ---
 

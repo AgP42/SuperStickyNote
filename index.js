@@ -25,6 +25,7 @@ import {
   placeForOpen,
   getOpen,
   toCardPayload,
+  getBubbleHidden,
 } from './src/store';
 
 AppRegistry.registerComponent(appName, () => App);
@@ -59,9 +60,11 @@ async function restoreOverlay() {
   if (!hasPermission) return;
   await syncOpenCards();
   try {
-    await StickyNative?.showBubble();
+    // Respect the user's Configuration → Bubble setting.
+    if (getBubbleHidden()) await StickyNative?.hideBubble();
+    else await StickyNative?.showBubble();
   } catch (e) {
-    blog(`[bub] show failed: ${e && e.message}`);
+    blog(`[bub] restore failed: ${e && e.message}`);
   }
 }
 

@@ -49,6 +49,7 @@ export interface Note {
 let cache: Note[] = [];
 let fontKey: FontKey = 'M';
 let fontSel = 'sans'; // 'sans' | 'serif' | 'mono' | a MyStyle/fonts path
+let bubbleHidden = false; // hide the ✚ launcher bubble
 let loaded = false;
 let notesPath = '';
 let settingsPath = '';
@@ -113,6 +114,7 @@ export async function initStore(): Promise<void> {
     if (s && FONT_SP[s.fontKey as FontKey]) fontKey = s.fontKey;
     if (s && typeof s.font === 'string' && s.font) fontSel = s.font;
     else if (s && typeof s.fontPath === 'string' && s.fontPath) fontSel = s.fontPath; // migrate
+    if (s && typeof s.bubbleHidden === 'boolean') bubbleHidden = s.bubbleHidden;
   } catch {}
   loaded = true;
 }
@@ -120,7 +122,24 @@ export async function initStore(): Promise<void> {
 // ---- Settings (global) --------------------------------------------------
 
 function saveSettings(): void {
-  StickyNative?.writeFile(settingsPath, JSON.stringify({fontKey, font: fontSel})).catch(() => {});
+  StickyNative?.writeFile(
+    settingsPath,
+    JSON.stringify({fontKey, font: fontSel, bubbleHidden}),
+  ).catch(() => {});
+}
+
+// ---- Bubble (✚ launcher) visibility -------------------------------------
+
+export function getBubbleHidden(): boolean {
+  return bubbleHidden;
+}
+
+/** Show/hide the launcher bubble and remember it. Applies natively at once. */
+export function setBubbleHidden(hidden: boolean): void {
+  bubbleHidden = hidden;
+  saveSettings();
+  (hidden ? StickyNative?.hideBubble() : StickyNative?.showBubble())?.catch(() => {});
+  notify();
 }
 
 export function getFontKey(): FontKey {

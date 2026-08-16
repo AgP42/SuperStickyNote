@@ -14,7 +14,7 @@ on the page without ever leaving what you were doing.
 - **Labels** with a filter (and an "Untagged" filter); **search**
 - **Lasso → Add to sticky**: OCR handwriting straight into a new sticky note
 - Edit a note's **text, icon and labels** from the list, with **copy / paste**
-- **Text size** XS→XXL and **fonts** (Sans/Serif/Mono + your own from `MyStyle/fonts`)
+- **Text size** XS→XXL and **fonts** (Sans/Serif/Mono + your own from `MyStyle/fonts`); **show/hide** the ✚ bubble — all under a collapsible **Configuration** section
 - Live preview: open sticky notes stay on top of the Manager, so font/size changes show in real time
 - **Export** to `.txt`, **backup/restore** to `.json` (import merges, never overwrites)
 - Notes stored **privately** (not cloud-synced)
