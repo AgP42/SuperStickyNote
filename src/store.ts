@@ -44,12 +44,20 @@ export interface Note {
   pinned: boolean;
   createdAt: number;
   updatedAt: number;
+  // Backlink to where the note was captured (e.g. lasso→OCR): tap "Go to source"
+  // to jump/open that file at that page. Absent on manually-created notes.
+  sourceFile?: string;
+  sourcePage?: number; // 1-indexed, as returned by getCurrentPageNum
 }
 
 let cache: Note[] = [];
 let fontKey: FontKey = 'M';
 let fontSel = 'sans'; // 'sans' | 'serif' | 'mono' | a MyStyle/fonts path
 let bubbleHidden = false; // hide the ✚ launcher bubble
+/** Thin solid box drawn on the note around lasso→OCR'd text: off, or its colour. */
+export type FrameStyle = 'off' | 'black' | 'grey1' | 'grey2';
+export const FRAME_STYLES: FrameStyle[] = ['off', 'black', 'grey1', 'grey2'];
+let frameStyle: FrameStyle = 'off';
 let loaded = false;
 let notesPath = '';
 let settingsPath = '';
@@ -72,13 +80,26 @@ export function subscribe(cb: () => void): () => void {
 
 export async function initStore(): Promise<void> {
   if (loaded) return;
-  // Private, hidden data dir (not cloud-synced). Fallback to a dot-dir if the
-  // native call ever fails, so we still never write data into a synced folder.
+  // Private, hidden data dir (not cloud-synced). If getPluginDirPath is
+  // unavailable, fall back to the host's PRIVATE files dir — NEVER a MyStyle
+  // path: MyStyle is cloud-synced, and writing notes.json there would expose it
+  // to sync corruption and leak note contents off-device.
   let dataDir = '';
   try {
     dataDir = (await NativePluginManager.getPluginDirPath()) || '';
   } catch {}
-  if (!dataDir) dataDir = '/storage/emulated/0/MyStyle/.superstickynote';
+  if (!dataDir) {
+    try {
+      const filesDir = (await StickyNative?.getFilesDir()) || '';
+      if (filesDir) dataDir = `${filesDir}/superstickynote`;
+    } catch {}
+  }
+  // Last resort: the pluginhost's private files dir by its known path — still
+  // app-private (never cloud-synced), unlike the old MyStyle fallback.
+  if (!dataDir) {
+    dataDir = '/data/data/com.ratta.supernote.pluginhost/files/superstickynote';
+    blog('[store] WARN: no plugin/files dir — using hardcoded private fallback');
+  }
   notesPath = `${dataDir}/notes.json`;
   settingsPath = `${dataDir}/settings.json`;
 
@@ -115,6 +136,11 @@ export async function initStore(): Promise<void> {
     if (s && typeof s.font === 'string' && s.font) fontSel = s.font;
     else if (s && typeof s.fontPath === 'string' && s.fontPath) fontSel = s.fontPath; // migrate
     if (s && typeof s.bubbleHidden === 'boolean') bubbleHidden = s.bubbleHidden;
+    if (s && typeof s.frameStyle === 'string' && FRAME_STYLES.includes(s.frameStyle)) {
+      frameStyle = s.frameStyle;
+    } else if (s && (s.frameOnCapture === true || typeof s.frameStyle === 'string')) {
+      frameStyle = 'black'; // migrate the pre-1.0 boolean / earlier solid|dashed|fill
+    }
   } catch {}
   loaded = true;
 }
@@ -124,8 +150,20 @@ export async function initStore(): Promise<void> {
 function saveSettings(): void {
   StickyNative?.writeFile(
     settingsPath,
-    JSON.stringify({fontKey, font: fontSel, bubbleHidden}),
+    JSON.stringify({fontKey, font: fontSel, bubbleHidden, frameStyle}),
   ).catch(() => {});
+}
+
+// ---- Frame-on-capture (mark captured text on the note) --------------------
+
+export function getFrameStyle(): FrameStyle {
+  return frameStyle;
+}
+
+export function setFrameStyle(s: FrameStyle): void {
+  frameStyle = s;
+  saveSettings();
+  notify();
 }
 
 // ---- Bubble (✚ launcher) visibility -------------------------------------
@@ -197,10 +235,6 @@ export async function flush(): Promise<void> {
 
 export function getAll(): Note[] {
   return cache.slice();
-}
-
-export function get(id: string): Note | undefined {
-  return cache.find(n => n.id === id);
 }
 
 export function getOpen(): Note[] {
@@ -375,7 +409,14 @@ export async function exportJson(): Promise<string> {
  * how many were added.
  */
 export async function importJson(): Promise<number> {
-  const raw = (await StickyNative?.readTextFile(JSON_BACKUP)) ?? '';
+  let raw = '';
+  try {
+    raw = (await StickyNative?.readTextFile(JSON_BACKUP)) ?? '';
+  } catch (e) {
+    blog(`[import] readTextFile threw: ${(e as Error)?.message}`);
+    throw new Error(`Read failed: ${(e as Error)?.message}`);
+  }
+  blog(`[import] read ${JSON_BACKUP} → ${raw.length} bytes`);
   if (!raw) throw new Error(`No backup at ${JSON_BACKUP}`);
   const arr = JSON.parse(raw);
   if (!Array.isArray(arr)) throw new Error('Backup is not a notes list');

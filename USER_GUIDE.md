@@ -6,7 +6,12 @@ Write with the keyboard, drag it around, keep several open at once — your thou
 land on the page without ever leaving what you were doing.
 
 > Works inside the **NOTE** and **DOCUMENT** apps. Notes are plain text (handwriting
-> inside a sticky note is not supported yet). Tested on Manta (A5 X2) and A5 X.
+> inside a sticky note is not supported yet).
+>
+> **Firmware:** Supernote's firmware is called *Chauvet* — what matters is the version
+> (check it in device settings). This release (**v1.0.0**) targets **Chauvet 3.29.43
+> (Manta/Nomad) / 2.26.40 (A5 X / A6 X) or later** and won't run on an earlier Chauvet;
+> devices still on an earlier version need the previous release. Verified on Nomad.
 
 ![SuperStickyNote in action](docs/screenshots/hero.png)
 
@@ -85,6 +90,9 @@ updates them **live**, and opening a note doesn't close the panel.
 - **Edit text** — a text editor with **Copy**, **Paste** and **Done**. *Shortcut: tap the title or preview.*
 - **Edit labels** — add labels (type + **Add**, or tap a suggestion); tap a label chip to remove it. *Shortcut: tap the labels by the title.*
 - **On screen / Closed** — one button that shows the state **and** toggles it (solid = floating, outline = closed).
+- **↪ Source** — only on notes made with **lasso → Add to StickyNote**: jumps back to the
+  page the handwriting came from (opening the source notebook/document if it isn't already
+  open), then closes the Manager so you land right on it.
 - **Export / Delete** (bottom-right) — save the note as `.txt`, or remove it.
 
 ![Editing a note's icon and labels](docs/screenshots/edit-icon-labels.png)
@@ -96,7 +104,14 @@ updates them **live**, and opening a note doesn't close the panel.
   (e.g. handwriting fonts). Applies to the sticky note text.
 - **Bubble** — **Shown / Hidden**: hide the ✚ launcher bubble if you don't want it
   floating over your pages. When it's hidden you still create notes with **＋ New note**
-  here, or with **lasso → Add to sticky**.
+  here, or with **lasso → Add to StickyNote**.
+- **Frame** — **Off / Black / Grey 1 / Grey 2**: when you capture handwriting with
+  **lasso → Add to StickyNote**, optionally draw a thin box **on the note** around the
+  text you captured, so you can see at a glance what was turned into a sticky note. It's
+  a single, thin line you can erase in one stroke. **Grey 1** is darker, **Grey 2** lighter.
+  Default **Off**.
+
+![The Configuration section](docs/screenshots/config.png)
 
 The footer stays tidy: **Backup** is always visible, **Configuration** collapses to a
 single line, and the **Ko-fi** line sits at the very bottom.
@@ -105,11 +120,23 @@ single line, and the **Ko-fi** line sits at the very bottom.
 
 ## 5. Lasso handwriting into a sticky (OCR)
 
-In a **notebook (NOTE)**, lasso some handwriting, then tap **Add to sticky** in the
+In a **notebook (NOTE)**, lasso some handwriting, then tap **Add to StickyNote** in the
 lasso toolbar. The selection is recognized (OCR) and dropped into a **new sticky note**.
 Recognition takes a few seconds — a "Recognizing…" message shows while it works.
 
-![Lasso → Add to sticky](docs/lasso-demo.gif)
+- The **lasso clears itself** once the text is captured — no need to tap away to dismiss it.
+  Your handwriting on the page is untouched.
+- Turn on **Configuration → Frame** to draw a thin box **on the note** around what you just
+  captured (black or grey — see §4).
+- The new sticky note keeps a **↪ Source** backlink: from the Manager, tap it to jump
+  straight back to that page (see §4).
+
+![Lasso → Add to StickyNote](docs/lasso-demo.gif)
+
+With **Frame** on, the captured handwriting is boxed on the note (black or grey), and each
+result carries a **↪ Source** backlink in the Manager:
+
+![Framed captures on the note](docs/screenshots/frame-on-note.png)
 
 ---
 
@@ -142,7 +169,8 @@ so cloud sync can't corrupt them. Backups and exports go to the visible
 
 - **Text only** — handwriting inside a sticky note isn't supported yet.
 - **8 sticky notes** can float at once; total notes are unlimited.
-- **Lasso → Add to sticky** works in **NOTE** files only; OCR takes a few seconds.
+- **Lasso → Add to StickyNote** works in **NOTE** files only; OCR takes a few seconds. The
+  **↪ Source** backlink can reopen **NOTE** and document files (PDF/EPUB/…) at the saved page.
 - **Moving a sticky note with the pen also draws on the note underneath** — the Supernote
   pen has a hardware path into the notebook that a plugin overlay can't intercept. Two ways
   around it: drag with your **finger**, or first select the **eraser** or **lasso** tool —

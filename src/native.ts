@@ -23,10 +23,9 @@ interface StickyNativeType {
   showBubble(): Promise<boolean>;
   hideBubble(): Promise<boolean>;
   syncCards(cards: CardPayload[]): Promise<boolean>;
-  hideAllCards(): Promise<boolean>;
   beginEdit(id: string): Promise<boolean>;
-  bringToFront(id: string): Promise<boolean>;
   clearAll(): Promise<number>;
+  getFilesDir(): Promise<string>;
   writeFile(path: string, content: string): Promise<boolean>;
   readTextFile(path: string): Promise<string>;
   ensureDir(path: string): Promise<boolean>;

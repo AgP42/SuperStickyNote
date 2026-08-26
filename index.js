@@ -26,7 +26,10 @@ import {
   getOpen,
   toCardPayload,
   getBubbleHidden,
+  getFrameStyle,
+  flush,
 } from './src/store';
+import {ensureFilePermissions} from './src/permissions';
 
 AppRegistry.registerComponent(appName, () => App);
 
@@ -68,16 +71,6 @@ async function restoreOverlay() {
   }
 }
 
-/** Hide everything while the plugin view (Manager/editor) is on screen. */
-async function hideOverlay() {
-  try {
-    await StickyNative?.hideAllCards();
-  } catch {}
-  try {
-    await StickyNative?.hideBubble();
-  } catch {}
-}
-
 // NOTE: we deliberately do NOT tie the overlay to AppState. Opening the soft
 // keyboard (or a focusable post-it) flips AppState to 'active' even though the
 // Manager isn't open — that spurious "active" was hiding the card we'd just
@@ -101,6 +94,16 @@ global.__ssnEnableOverlay = async () => {
 // ---- Startup --------------------------------------------------------------
 
 (async () => {
+  // Chauvet permission model: shared storage (MyStyle legacy dirs, .json backup,
+  // fonts, lasso→OCR) is gated behind FILE:READ/WRITE — even raw java.io. Request
+  // them before initStore()'s legacy-dir reads so they don't hit a
+  // SecurityException. (Separate from the overlay SYSTEM_ALERT_WINDOW below.)
+  try {
+    const ok = await ensureFilePermissions();
+    blog(`[boot] file permissions granted=${ok}`);
+  } catch (e) {
+    blog(`[boot] ensureFilePermissions failed: ${e && e.message}`);
+  }
   await initStore();
   await refreshPermission();
   // Clear stale windows left in the persistent PluginHost process by a previous
@@ -162,10 +165,44 @@ DeviceEventEmitter.addListener('onCardResized', payload => {
   if (payload && payload.id) setSize(payload.id, payload.w, payload.h);
 });
 
+// ---- Frame drawing on the note (optional, around captured text) -----------
+// A single thin fineliner rectangle (one element → draws instantly and is
+// erased in one gesture). Native pen colours: 0x00 black, 0x9D dark grey,
+// 0xC9 light grey. penWidth schema minimum is 100.
+const FRAME_COLOR = {black: 0x00, grey1: 0x9d, grey2: 0xc9};
+
+/** Draw a thin solid box on the note around `rect` in the chosen colour. */
+async function drawFrame(rect, style) {
+  const penColor = FRAME_COLOR[style];
+  if (penColor == null) return; // 'off' or unknown
+  try {
+    await PluginCommAPI.insertGeometry({
+      penColor,
+      penType: 10, // fineliner
+      penWidth: 200, // schema minimum is 100
+      type: 'GEO_polygon',
+      points: [
+        {x: rect.left, y: rect.top},
+        {x: rect.right, y: rect.top},
+        {x: rect.right, y: rect.bottom},
+        {x: rect.left, y: rect.bottom},
+        {x: rect.left, y: rect.top},
+      ],
+      showLassoAfterInsert: false,
+    });
+  } catch (e) {
+    blog(`[lasso] drawFrame(${style}) failed: ${e && e.message}`);
+  }
+}
+
 // Lasso → "Add to sticky": OCR the selection and drop it into a new post-it.
 async function handleLassoToSticky() {
   try {
     ToastAndroid.show('Recognizing…', ToastAndroid.SHORT);
+    // Element reads (getLassoElements/recognizeElements) + getPageSize hit shared
+    // storage → gated behind FILE:READ on the preview firmware. Guard here so a
+    // first-run OCR before boot's grant doesn't throw a SecurityException.
+    await ensureFilePermissions();
     const pathR = await PluginCommAPI.getCurrentFilePath();
     const path = pathR && pathR.success ? pathR.result : null;
     if (!path) {
@@ -177,7 +214,9 @@ async function handleLassoToSticky() {
     const sizeR = await PluginFileAPI.getPageSize(path, page);
     const size = sizeR && sizeR.success ? sizeR.result : null;
     if (!size) {
-      ToastAndroid.show('Could not read the page size', ToastAndroid.SHORT);
+      const msg = (sizeR && sizeR.error && sizeR.error.message) || 'unknown';
+      blog(`[lasso] getPageSize(${page}) failed: ${msg}`);
+      ToastAndroid.show(`Page size failed: ${msg}`, ToastAndroid.SHORT);
       return;
     }
     const elR = await PluginCommAPI.getLassoElements();
@@ -185,6 +224,18 @@ async function handleLassoToSticky() {
     if (!els || els.length === 0) {
       ToastAndroid.show('Nothing selected', ToastAndroid.SHORT);
       return;
+    }
+    // Grab the lasso bounds NOW (before we clear the selection) in case the user
+    // enabled a "mark captured text" style below.
+    const frameStyle = getFrameStyle();
+    let lassoRect = null;
+    if (frameStyle !== 'off') {
+      try {
+        const rr = await PluginCommAPI.getLassoRect();
+        if (rr && rr.success) lassoRect = rr.result;
+      } catch (e) {
+        blog(`[lasso] getLassoRect failed: ${e && e.message}`);
+      }
     }
     // Full page size (NOT the lasso rect) or the recognizer throws.
     const recR = await PluginCommAPI.recognizeElements(els, size);
@@ -198,9 +249,21 @@ async function handleLassoToSticky() {
       ToastAndroid.show('Nothing recognized', ToastAndroid.SHORT);
       return;
     }
+    // Optionally mark on the note what we just captured.
+    if (lassoRect) {
+      await drawFrame(lassoRect, frameStyle);
+    }
+    // Auto-dismiss the lasso selection so the user doesn't have to tap away
+    // (2 = completely remove the lasso box; does NOT delete the handwriting).
+    try {
+      await PluginCommAPI.setLassoBoxState(2);
+    } catch (e) {
+      blog(`[lasso] setLassoBoxState failed: ${e && e.message}`);
+    }
     const atLimit = getOpen().length >= MAX_CARDS;
     const note = create(DEFAULT_ICON);
-    update(note.id, {body: text});
+    // Backlink: remember where this OCR came from so the Manager can jump back.
+    update(note.id, {body: text, sourceFile: path, sourcePage: page});
     if (!atLimit) {
       placeForOpen(note.id);
       setOpen(note.id, true);
@@ -225,10 +288,33 @@ DeviceEventEmitter.addListener('onOpenManager', async () => {
   }
 });
 
-// Observe only — never act (the host dispatches other plugins' life events too).
-PluginManager.addPluginLifeListener({
-  onStart: () => blog('[life] start'),
-  onStop: () => blog('[life] stop'),
+// Plugin lifecycle (Chauvet). `addPluginLifeListener` was REMOVED in
+// sn-plugin-lib 0.1.65 → `registerPluginLifeListener({onMsg})`, msg.state:
+//   0 initialized · 1 mounted · 2 start · 3 stop · 4 unmounted · 5 destroyed
+// start(2)/stop(3) bracket each plugin-VIEW session (Manager open/close) and
+// fire repeatedly — we must NOT touch the overlay there or the persistent
+// floating cards would be wiped every time the Manager closes.
+// unmounted(4)/destroyed(5) are the plugin TEARDOWN: the JS is going away but
+// the pluginhost PROCESS lives on, so any TYPE_APPLICATION_OVERLAY windows we
+// left behind become ORPHANS that no future classloader can control. Flush the
+// store and clearAll() so a reload/reinstall starts clean (boot() re-paints the
+// cards from the store).
+const LIFE = ['initialized', 'mounted', 'start', 'stop', 'unmounted', 'destroyed'];
+PluginManager.registerPluginLifeListener({
+  onMsg: async msg => {
+    const state = msg && typeof msg.state === 'number' ? msg.state : -1;
+    blog(`[life] state=${state} (${LIFE[state] || '?'})`);
+    if (state === 4 || state === 5) {
+      try {
+        await flush(); // persist any debounced geometry/body edit before teardown
+      } catch {}
+      try {
+        await StickyNative?.clearAll(); // remove our overlay windows → no orphans
+      } catch (e) {
+        blog(`[life] clearAll on teardown failed: ${e && e.message}`);
+      }
+    }
+  },
 });
 
 // ---- Toolbar entry point --------------------------------------------------
@@ -247,7 +333,7 @@ PluginManager.registerButton(1, ['NOTE', 'DOC'], {
 // showType:0 → act headless (no plugin view), we handle it in onButtonPress.
 PluginManager.registerButton(2, ['NOTE'], {
   id: LASSO_BTN,
-  name: 'Add to sticky',
+  name: 'Add to StickyNote',
   icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
   editDataTypes: [0, 1, 2, 3, 4],
   showType: 0,

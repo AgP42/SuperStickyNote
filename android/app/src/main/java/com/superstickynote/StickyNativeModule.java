@@ -902,6 +902,21 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
 
     // ---- Files / PluginJanitor -------------------------------------------
 
+    /**
+     * The host process's PRIVATE files dir (/data/.../files). App-private, never
+     * cloud-synced and permission-free — the safe fallback for notes.json when
+     * PluginManager.getPluginDirPath() is unavailable, instead of a visible
+     * (cloud-synced) MyStyle folder.
+     */
+    @ReactMethod
+    public void getFilesDir(Promise promise) {
+        try {
+            promise.resolve(getReactApplicationContext().getFilesDir().getAbsolutePath());
+        } catch (Exception e) {
+            promise.reject("FILESDIR_FAILED", e.getMessage(), e);
+        }
+    }
+
     @ReactMethod
     public void writeFile(String path, String content, Promise promise) {
         try {
