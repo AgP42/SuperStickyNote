@@ -195,6 +195,48 @@ async function drawFrame(rect, style) {
   }
 }
 
+// Human-readable label for one lasso geometry. Shapes carry no text to OCR,
+// so a shapes-only selection is noted descriptively instead.
+function describeGeometry(g) {
+  switch (g && g.type) {
+    case 'straightLine':
+      return 'Line';
+    case 'GEO_circle':
+      return 'Circle';
+    case 'GEO_ellipse':
+      return 'Ellipse';
+    case 'GEO_polygon': {
+      const pts = Array.isArray(g.points) ? g.points : [];
+      // Polygons come back closed (last point repeats the first) → sides = pts − 1.
+      let sides = pts.length;
+      if (sides >= 2) {
+        const a = pts[0];
+        const b = pts[sides - 1];
+        if (a && b && a.x === b.x && a.y === b.y) sides -= 1;
+      }
+      if (sides === 3) return 'Triangle';
+      if (sides === 4) return 'Rectangle';
+      if (sides > 4) return `Polygon (${sides} sides)`;
+      return 'Polygon';
+    }
+    default:
+      return 'Shape';
+  }
+}
+
+// Tally shapes into one body, e.g. "2 × Circle\n1 × Line". Empty → no geometry.
+function describeGeometries(geos) {
+  if (!geos || geos.length === 0) return '';
+  const counts = new Map();
+  for (const g of geos) {
+    const label = describeGeometry(g);
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  const parts = [];
+  for (const [label, n] of counts) parts.push(n > 1 ? `${n} × ${label}` : label);
+  return parts.join('\n');
+}
+
 // Lasso → "Add to sticky": OCR the selection and drop it into a new post-it.
 async function handleLassoToSticky() {
   try {
@@ -221,10 +263,15 @@ async function handleLassoToSticky() {
     }
     const elR = await PluginCommAPI.getLassoElements();
     const els = elR && elR.success ? elR.result : [];
-    if (!els || els.length === 0) {
-      ToastAndroid.show('Nothing selected', ToastAndroid.SHORT);
-      return;
-    }
+    // Don't bail on empty: a shapes-only selection can return no elements here
+    // (geometry is read separately below via getLassoGeometries).
+    // Text ALWAYS wins over shapes. A geometry element (line/shape) mixed into
+    // the selection can make the recognizer return nothing for the WHOLE lasso,
+    // silently dropping real handwriting — so recognize text WITHOUT the shapes.
+    // A line beside notes must never suppress the OCR; the shape description is
+    // only a fallback for a truly text-less (shape-only) selection.
+    const SHAPE_TYPES = new Set([700, 800]); // Element.TYPE_GEO, TYPE_FIVE_STAR
+    const textEls = (els || []).filter(e => e && !SHAPE_TYPES.has(e.type));
     // Grab the lasso bounds NOW (before we clear the selection) in case the user
     // enabled a "mark captured text" style below.
     const frameStyle = getFrameStyle();
@@ -238,13 +285,29 @@ async function handleLassoToSticky() {
       }
     }
     // Full page size (NOT the lasso rect) or the recognizer throws.
-    const recR = await PluginCommAPI.recognizeElements(els, size);
+    let text = '';
+    if (textEls.length > 0) {
+      const recR = await PluginCommAPI.recognizeElements(textEls, size);
+      text = recR && recR.success ? (recR.result || '').trim() : '';
+    }
+    // Free native stroke caches for everything we pulled (shapes included).
     for (const e of els) {
       try {
         e && e.recycle && e.recycle();
       } catch {}
     }
-    const text = recR && recR.success ? (recR.result || '').trim() : '';
+    if (!text) {
+      // Only now, with no handwriting to show, describe the shapes instead — so a
+      // shape-only lasso still makes a sticky. Still selected here (we clear the
+      // lasso further down), so getLassoGeometries() sees them.
+      try {
+        const geoR = await PluginCommAPI.getLassoGeometries();
+        const geos = geoR && geoR.success ? geoR.result : null;
+        text = describeGeometries(geos);
+      } catch (e) {
+        blog(`[lasso] getLassoGeometries failed: ${e && e.message}`);
+      }
+    }
     if (!text) {
       ToastAndroid.show('Nothing recognized', ToastAndroid.SHORT);
       return;
@@ -335,7 +398,7 @@ PluginManager.registerButton(2, ['NOTE'], {
   id: LASSO_BTN,
   name: 'Add to StickyNote',
   icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
-  editDataTypes: [0, 1, 2, 3, 4],
+  editDataTypes: [0, 1, 2, 3, 4, 5], // 0=stroke 1=title 2=picture 3=text 4=link 5=geometry
   showType: 0,
 });
 
