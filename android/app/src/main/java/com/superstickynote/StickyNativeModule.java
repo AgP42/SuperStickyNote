@@ -64,7 +64,12 @@ import java.util.Map;
  * Text edits stream to JS (onCardEdited).
  */
 public class StickyNativeModule extends ReactContextBaseJavaModule {
-    static final int MAX_CARDS = 8;
+    /**
+     * HARD ceiling on floating cards. The user's own maximum (default 8) is a
+     * setting on the JS side; this only stops a runaway sync from opening
+     * hundreds of overlay windows.
+     */
+    static final int MAX_CARDS = 40;
     private static final String BUBBLE_TAG = "SSN_BUBBLE";
     private static final String CARD_TAG_PREFIX = "SSN_CARD:";
     private static final int DEFAULT_FONT_SP = 14;
@@ -103,6 +108,14 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         boolean editing;
         boolean collapsed;
         boolean muteWatcher;
+        /** The label set last painted, so an unchanged list isn't rebuilt. */
+        String labelsKey = null;
+        /**
+         * Bumped on every LOCAL text change and echoed to JS with the text. A
+         * sync carrying a LOWER rev is a stale echo of the user's own typing
+         * (the JS round-trip is slower than the keyboard) — see updateCard().
+         */
+        int rev;
     }
 
     public StickyNativeModule(ReactApplicationContext ctx) {
@@ -273,13 +286,15 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                     int y = n.hasKey("y") && !n.isNull("y") ? n.getInt("y") : -1;
                     int w = n.hasKey("w") && !n.isNull("w") ? n.getInt("w") : -1;
                     int h = n.hasKey("h") && !n.isNull("h") ? n.getInt("h") : -1;
+                    // Revision of the body JS last heard from THIS card (-1 = unknown).
+                    int rev = n.hasKey("rev") && !n.isNull("rev") ? n.getInt("rev") : -1;
                     if (x < 0 || y < 0) {
                         x = dp(24) + (i % 4) * dp(30);
                         y = dp(90) + (i % 4) * dp(30);
                     }
                     Card existing = cards.get(id);
                     if (existing != null) {
-                        updateCard(existing, icon, body, labels, x, y, w, h, collapsed, fontSp);
+                        updateCard(existing, icon, body, labels, x, y, w, h, collapsed, fontSp, rev);
                     } else {
                         addCard(ctx, id, icon, body, labels, x, y, w, h, collapsed, fontSp);
                     }
@@ -345,8 +360,11 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         TextView iconV = new TextView(ctx);
         iconV.setText(icon);
         iconV.setTextColor(Color.BLACK);
-        iconV.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        iconV.setPadding(dp(2), dp(2), dp(10), dp(2));
+        iconV.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        iconV.setPadding(dp(8), dp(8), dp(12), dp(8));
+        iconV.setMinWidth(dp(44));
+        iconV.setMinHeight(dp(44));
+        iconV.setGravity(Gravity.CENTER);
         header.addView(iconV, wrapLP());
         c.iconView = iconV;
 
@@ -432,6 +450,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                 WritableMap m = Arguments.createMap();
                 m.putString("id", c.id);
                 m.putString("body", e.toString());
+                m.putInt("rev", ++c.rev);
                 emit("onCardEdited", m);
             }
         });
@@ -472,8 +491,13 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         TextView handle = new TextView(ctx);
         handle.setText("◢");
         handle.setTextColor(Color.BLACK);
-        handle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        handle.setPadding(dp(10), dp(4), dp(2), dp(2));
+        handle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        // Generous on the top/left so the finger has somewhere to land without
+        // covering the text, tight on the bottom/right where the corner is.
+        handle.setPadding(dp(18), dp(12), dp(6), dp(6));
+        handle.setMinWidth(dp(48));
+        handle.setMinHeight(dp(44));
+        handle.setGravity(Gravity.BOTTOM | Gravity.END);
         LinearLayout.LayoutParams handleLP = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         handleLP.gravity = Gravity.END;
@@ -595,16 +619,35 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
     }
 
     private void updateCard(Card c, String icon, String body, List<String> labels,
-                            int x, int y, int w, int h, boolean collapsed, int fontSp) {
+                            int x, int y, int w, int h, boolean collapsed, int fontSp,
+                            int rev) {
         try {
             c.iconView.setText(icon);
             c.titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSp);
-            if (c.labelsBox != null) fillLabels(c.labelsBox.getContext(), c.labelsBox, labels);
+            // fillLabels() tears down and rebuilds a TextView + GradientDrawable per
+            // label, forcing a relayout and an e-ink repaint of the card. Skip it
+            // whenever the list is the same one we already painted.
+            String labelsKey = joinLabels(labels);
+            if (c.labelsBox != null && !labelsKey.equals(c.labelsKey)) {
+                fillLabels(c.labelsBox.getContext(), c.labelsBox, labels);
+                c.labelsKey = labelsKey;
+            }
             c.body.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSp);
-            if (!c.editing && !c.body.getText().toString().equals(body)) {
+            // A payload whose rev is BEHIND our counter is an echo of the user's own
+            // typing that crossed the bridge late: applying it would rewind the text
+            // and — because setText() collapses the selection — drop the caret to 0,
+            // scrambling the sentence being typed (device 2026-09-20).
+            boolean staleEcho = rev >= 0 && rev < c.rev;
+            if (!c.editing && !staleEcho && !c.body.getText().toString().equals(body)) {
+                int sel = c.body.getSelectionStart();
                 c.muteWatcher = true;
                 c.body.setText(body);
                 c.muteWatcher = false;
+                if (sel > 0) { // setText() puts the caret at 0 — put it back
+                    try {
+                        c.body.setSelection(Math.min(sel, c.body.getText().length()));
+                    } catch (Exception ignored) {}
+                }
                 c.titleView.setText(firstLine(body));
             }
             if (w > 0) c.params.width = w;
@@ -667,6 +710,13 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         } catch (Exception e) {
             promise.reject("LIST_FONTS_FAILED", e.getMessage(), e);
         }
+    }
+
+    private static String joinLabels(List<String> labels) {
+        if (labels == null || labels.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (String l : labels) sb.append(l).append('\u0001');
+        return sb.toString();
     }
 
     private void setCollapsed(Card c, boolean collapsed) {
@@ -769,6 +819,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                     WritableMap m = Arguments.createMap();
                     m.putString("id", c.id);
                     m.putString("body", c.body.getText().toString());
+                    m.putInt("rev", c.rev);
                     emit("onCardEdited", m);
                 }
             }
@@ -838,6 +889,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
             WritableMap m = Arguments.createMap();
             m.putString("id", c.id);
             m.putString("body", c.body.getText().toString());
+            m.putInt("rev", c.rev);
             emit("onCardEdited", m);
         }
     }
@@ -1086,6 +1138,53 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         cv.drawLine(16 * s, 19 * s, 22 * s, 19 * s, p); // plus —
         cv.drawLine(19 * s, 16 * s, 19 * s, 22 * s, p); // plus |
         return bmp;
+    }
+
+    /**
+     * Draw `text` in the font at `fontPath` and save it as a PNG, so the Manager
+     * can show a real preview of a MyStyle/fonts face. React Native resolves
+     * fontFamily against fonts bundled at build time only, so a font loaded from
+     * a path can never be previewed as text — this is the way round it.
+     */
+    @ReactMethod
+    public void renderFontSample(String fontPath, String text, int sizePx, String outPath, Promise promise) {
+        new Thread(() -> renderFontSampleBlocking(fontPath, text, sizePx, outPath, promise)).start();
+    }
+
+    private void renderFontSampleBlocking(String fontPath, String text, int sizePx, String outPath, Promise promise) {
+        Bitmap bmp = null;
+        try {
+            Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+            p.setTypeface(fontFor(fontPath));
+            p.setTextSize(sizePx);
+            p.setColor(Color.BLACK);
+            Paint.FontMetrics fm = p.getFontMetrics();
+            int pad = Math.max(2, sizePx / 12);
+            int w = (int) Math.ceil(p.measureText(text)) + pad * 2;
+            int h = (int) Math.ceil(fm.bottom - fm.top) + pad * 2;
+            if (w <= pad * 2 || h <= pad * 2) {
+                promise.reject("FONT_SAMPLE", "font produced no metrics");
+                return;
+            }
+            bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            Canvas cv = new Canvas(bmp);
+            cv.drawText(text, pad, pad - fm.top, p);
+            File f = new File(outPath);
+            File parent = f.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            try (java.io.FileOutputStream os = new java.io.FileOutputStream(f)) {
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, os);
+            }
+            WritableMap m = Arguments.createMap();
+            m.putString("path", outPath);
+            m.putInt("w", w);
+            m.putInt("h", h);
+            promise.resolve(m);
+        } catch (Exception e) {
+            promise.reject("FONT_SAMPLE", e.getMessage(), e);
+        } finally {
+            if (bmp != null) bmp.recycle(); // also on the failure path
+        }
     }
 
     /** A rounded label chip matching the Manager's look (white fill, black outline). */

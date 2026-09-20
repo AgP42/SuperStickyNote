@@ -34,12 +34,22 @@ interface StickyNativeType {
   listFonts(): Promise<Array<{name: string; path: string}>>;
   cleanupOldVersions(dirPath: string): Promise<{freed: number; kept: string}>;
   appendLog(text: string): Promise<boolean>;
+  renderFontSample(
+    fontPath: string,
+    text: string,
+    sizePx: number,
+    outPath: string,
+  ): Promise<{path: string; w: number; h: number}>;
 }
 
 export const StickyNative: StickyNativeType | undefined =
   NativeModules.StickyNative;
 
-export const MAX_CARDS = 8;
+/**
+ * HARD ceiling on floating cards, matching the native module. The user's own
+ * maximum (default 8) is a setting — see getMaxCards() in the store.
+ */
+export const MAX_CARDS = 40;
 
 /**
  * Data files (notes.json, settings.json) live in the plugin's PRIVATE, hidden

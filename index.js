@@ -12,8 +12,8 @@ import {AppRegistry, DeviceEventEmitter, Image, ToastAndroid} from 'react-native
 import App from './App';
 import {name as appName} from './app.json';
 
-import {PluginManager, PluginCommAPI, PluginFileAPI} from 'sn-plugin-lib';
-import {StickyNative, MAX_CARDS, blog} from './src/native';
+import {PluginManager, PluginCommAPI, PluginDocAPI, PluginFileAPI} from 'sn-plugin-lib';
+import {StickyNative, blog} from './src/native';
 import {DEFAULT_ICON} from './src/icons';
 import {
   initStore,
@@ -23,6 +23,7 @@ import {
   setGeometry,
   setSize,
   placeForOpen,
+  getMaxCards,
   getOpen,
   toCardPayload,
   getBubbleHidden,
@@ -30,6 +31,7 @@ import {
   flush,
 } from './src/store';
 import {ensureFilePermissions} from './src/permissions';
+import {detectUnderlineLabels} from './src/underline';
 
 AppRegistry.registerComponent(appName, () => App);
 
@@ -48,11 +50,25 @@ async function refreshPermission() {
   return hasPermission;
 }
 
+/**
+ * Last body revision received from each native card. Echoed back on every sync
+ * so the card can recognise — and ignore — a payload that is just a late echo
+ * of what the user is typing right now.
+ */
+const cardRev = new Map();
+
 /** Reflect the store's open notes onto the native cards. */
 async function syncOpenCards() {
   if (!hasPermission) return;
   try {
-    await StickyNative?.syncCards(getOpen().map(toCardPayload));
+    const open = getOpen();
+    const live = new Set(open.map(n => n.id));
+    for (const id of cardRev.keys()) {
+      if (!live.has(id)) cardRev.delete(id); // its native Card is gone with its rev
+    }
+    await StickyNative?.syncCards(
+      open.map(n => ({...toCardPayload(n), rev: cardRev.get(n.id) ?? -1})),
+    );
   } catch (e) {
     blog(`[cards] sync failed: ${e && e.message}`);
   }
@@ -125,9 +141,9 @@ global.__ssnEnableOverlay = async () => {
 // Bubble tap → create a note, float it, and drop straight into edit mode so
 // the keyboard opens on the fresh post-it (no plugin view involved).
 DeviceEventEmitter.addListener('onNewNote', async () => {
-  if (getOpen().length >= MAX_CARDS) {
+  if (getOpen().length >= getMaxCards()) {
     ToastAndroid.show(
-      `Max ${MAX_CARDS} sticky notes on screen — close one first`,
+      `Max ${getMaxCards()} sticky notes on screen — close one first`,
       ToastAndroid.SHORT,
     );
     return; // never drop an existing post-it to make room
@@ -145,12 +161,16 @@ DeviceEventEmitter.addListener('onNewNote', async () => {
 
 // Inline edits stream from the native EditText — persist to the store.
 DeviceEventEmitter.addListener('onCardEdited', payload => {
-  if (payload && payload.id != null) update(payload.id, {body: payload.body});
+  if (!payload || payload.id == null) return;
+  if (typeof payload.rev === 'number') cardRev.set(payload.id, payload.rev);
+  update(payload.id, {body: payload.body}, {fromCard: true});
 });
 
 DeviceEventEmitter.addListener('onCardClose', payload => {
   const id = payload && payload.id;
-  if (id) setOpen(id, false); // native already removed the card view
+  if (!id) return;
+  cardRev.delete(id); // a re-opened card starts its revisions from scratch
+  setOpen(id, false); // native already removed the card view
 });
 
 DeviceEventEmitter.addListener('onCardMoved', payload => {
@@ -247,20 +267,39 @@ async function handleLassoToSticky() {
     await ensureFilePermissions();
     const pathR = await PluginCommAPI.getCurrentFilePath();
     const path = pathR && pathR.success ? pathR.result : null;
-    if (!path) {
-      ToastAndroid.show('No open note', ToastAndroid.SHORT);
+    if (!path || !/\.(note|pdf|epub)$/i.test(path)) {
+      ToastAndroid.show('Open a note or document to capture', ToastAndroid.SHORT);
       return;
     }
+    const isNote = /\.note$/i.test(path);
+    // getCurrentPageNum and openFile share the firmware's page space, so the RAW
+    // value round-trips with no ±1 — converting here is what puts a backlink one
+    // page early.
     const pageR = await PluginCommAPI.getCurrentPageNum();
     const page = pageR && pageR.success ? pageR.result : 1;
-    const sizeR = await PluginFileAPI.getPageSize(path, page);
-    const size = sizeR && sizeR.success ? sizeR.result : null;
-    if (!size) {
-      const msg = (sizeR && sizeR.error && sizeR.error.message) || 'unknown';
-      blog(`[lasso] getPageSize(${page}) failed: ${msg}`);
-      ToastAndroid.show(`Page size failed: ${msg}`, ToastAndroid.SHORT);
+    // The recognizer needs the FULL page size (not the lasso rect). getPageSize is
+    // a note-file API, so a document falls back to the displayed page size.
+    let size = null;
+    if (isNote) {
+      const sizeR = await PluginFileAPI.getPageSize(path, page);
+      size = sizeR && sizeR.success ? sizeR.result : null;
+      if (!size) {
+        blog(`[lasso] getPageSize(${page}) failed: ${(sizeR && sizeR.error && sizeR.error.message) || 'unknown'}`);
+      }
+    }
+    if (!size || !size.width) {
+      try {
+        const dR = await PluginCommAPI.getPageDisplaySize();
+        if (dR && dR.success && dR.result && dR.result.width > 0) size = dR.result;
+      } catch (e) {
+        blog(`[lasso] getPageDisplaySize failed: ${e && e.message}`);
+      }
+    }
+    if (!size || !size.width) {
+      ToastAndroid.show('Page size unavailable', ToastAndroid.SHORT);
       return;
     }
+    blog(`[lasso] path=${path} isNote=${isNote} page=${page} size=${size.width}x${size.height}`);
     const elR = await PluginCommAPI.getLassoElements();
     const els = elR && elR.success ? elR.result : [];
     // Don't bail on empty: a shapes-only selection can return no elements here
@@ -274,7 +313,7 @@ async function handleLassoToSticky() {
     const textEls = (els || []).filter(e => e && !SHAPE_TYPES.has(e.type));
     // Grab the lasso bounds NOW (before we clear the selection) in case the user
     // enabled a "mark captured text" style below.
-    const frameStyle = getFrameStyle();
+    const frameStyle = isNote ? getFrameStyle() : 'off';
     let lassoRect = null;
     if (frameStyle !== 'off') {
       try {
@@ -289,6 +328,15 @@ async function handleLassoToSticky() {
     if (textEls.length > 0) {
       const recR = await PluginCommAPI.recognizeElements(textEls, size);
       text = recR && recR.success ? (recR.result || '').trim() : '';
+    }
+    // A clean straight underline under a word turns that word into a label. Costs
+    // nothing when there is no such line, and must run while the lasso is still
+    // active and before the elements below are recycled.
+    let autoLabels = [];
+    try {
+      autoLabels = await detectUnderlineLabels(size, els || []);
+    } catch (e) {
+      blog(`[lasso] underline labels failed: ${e && e.message}`);
     }
     // Free native stroke caches for everything we pulled (shapes included).
     for (const e of els) {
@@ -323,17 +371,26 @@ async function handleLassoToSticky() {
     } catch (e) {
       blog(`[lasso] setLassoBoxState failed: ${e && e.message}`);
     }
-    const atLimit = getOpen().length >= MAX_CARDS;
+    const atLimit = getOpen().length >= getMaxCards();
     const note = create(DEFAULT_ICON);
     // Backlink: remember where this OCR came from so the Manager can jump back.
-    update(note.id, {body: text, sourceFile: path, sourcePage: page});
+    update(note.id, {
+      body: text,
+      sourceFile: path,
+      sourcePage: page,
+      sourceKind: isNote ? 'note' : 'doc',
+      ...(autoLabels.length > 0 ? {labels: autoLabels} : {}),
+    });
     if (!atLimit) {
       placeForOpen(note.id);
       setOpen(note.id, true);
       await syncOpenCards();
     }
+    const labelNote = autoLabels.length > 0 ? ` · ${autoLabels.join(', ')}` : '';
     ToastAndroid.show(
-      atLimit ? 'Saved to a new sticky (screen full — see Manager)' : 'Added to a new sticky note',
+      (atLimit
+        ? 'Saved to a new sticky (screen full — see Manager)'
+        : 'Added to a new sticky note') + labelNote,
       ToastAndroid.SHORT,
     );
   } catch (e) {
@@ -384,6 +441,7 @@ PluginManager.registerPluginLifeListener({
 
 const TOOLBAR_BTN = 100;
 const LASSO_BTN = 200;
+const DOC_BTN = 300;
 
 PluginManager.registerButton(1, ['NOTE', 'DOC'], {
   id: TOOLBAR_BTN,
@@ -392,9 +450,71 @@ PluginManager.registerButton(1, ['NOTE', 'DOC'], {
   showType: 1,
 });
 
+/**
+ * DOC selection → "Add to StickyNote": the text is already text in a PDF, so
+ * there is nothing to recognise — read the selection, keep the backlink.
+ * getLastSelectedText FAILS by design when nothing is selected.
+ */
+async function handleDocSelection() {
+  try {
+    let text = '';
+    try {
+      const r = await PluginDocAPI.getLastSelectedText();
+      text = r && r.success && typeof r.result === 'string' ? r.result : '';
+    } catch (e) {
+      blog(`[doc] getLastSelectedText threw: ${e && e.message}`);
+    }
+    if (!text.trim()) {
+      ToastAndroid.show('Select some text first', ToastAndroid.SHORT);
+      return;
+    }
+    let path = null;
+    let page = null;
+    try {
+      const p = await PluginCommAPI.getCurrentFilePath();
+      path = p && p.success ? p.result : null;
+    } catch (e) {
+      blog(`[doc] getCurrentFilePath failed: ${e && e.message}`);
+    }
+    try {
+      const g = await PluginCommAPI.getCurrentPageNum();
+      page = g && g.success && typeof g.result === 'number' ? g.result : null;
+    } catch (e) {
+      blog(`[doc] getCurrentPageNum failed: ${e && e.message}`);
+    }
+    // At the on-screen limit the sticky is still created — it just waits in the
+    // Manager instead of stealing a card, exactly as the lasso capture does.
+    const atLimit = getOpen().length >= getMaxCards();
+    const note = create(DEFAULT_ICON);
+    const patch = {body: text, sourceKind: 'doc'};
+    if (path) patch.sourceFile = path;
+    if (page != null) patch.sourcePage = page;
+    update(note.id, patch);
+    if (!atLimit) {
+      placeForOpen(note.id);
+      setOpen(note.id, true);
+      await syncOpenCards();
+    }
+    blog(`[doc] captured ${text.length} chars from ${path || '?'} p${page}`);
+    ToastAndroid.show(
+      atLimit
+        ? 'Saved to a new sticky (screen full — see Manager)'
+        : 'Added to a new sticky note',
+      ToastAndroid.SHORT,
+    );
+  } catch (e) {
+    blog(`[doc] err: ${e && e.message}`);
+    ToastAndroid.show(`Capture failed: ${e && e.message}`, ToastAndroid.SHORT);
+  }
+}
+
 // Lasso toolbar button (NOTE only): OCR the selection into a new sticky.
 // showType:0 → act headless (no plugin view), we handle it in onButtonPress.
-PluginManager.registerButton(2, ['NOTE'], {
+// Registered for DOC as well: a PDF/EPUB can carry handwritten annotations, and
+// the firmware surfaces the same lasso toolbar over them. Everything that WRITES
+// on the page is gated to .note inside the handler (a document has no geometry
+// layer of ours to draw into).
+PluginManager.registerButton(2, ['NOTE', 'DOC'], {
   id: LASSO_BTN,
   name: 'Add to StickyNote',
   icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
@@ -402,10 +522,24 @@ PluginManager.registerButton(2, ['NOTE'], {
   showType: 0,
 });
 
+// DOC selection toolbar (PDF/EPUB): turn the selected text into a sticky.
+// Button type 3 is the selection toolbar, DOC only; editDataTypes is documented
+// as lasso-only, so it is not declared here. showType:0 → act headless.
+PluginManager.registerButton(3, ['DOC'], {
+  id: DOC_BTN,
+  name: 'Add to StickyNote',
+  icon: Image.resolveAssetSource(require('./assets/icon.png')).uri,
+  showType: 0,
+});
+
 PluginManager.registerButtonListener({
   onButtonPress(e) {
     if (e && e.id === LASSO_BTN) {
       handleLassoToSticky();
+      return;
+    }
+    if (e && e.id === DOC_BTN) {
+      handleDocSelection();
       return;
     }
     // Toolbar (showType:1) opens the Manager; cards stay on top for live preview.
