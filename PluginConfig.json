@@ -1,9 +1,9 @@
 {
   "name": "SuperStickyNote",
-  "desc": "Floating sticky quick-notes for Supernote. A launcher bubble and up to 8 draggable post-it cards float over NOTE and DOC; tap to edit with the keyboard. Notes and .txt exports live in MyStyle/Plugin/SuperStickyNote.",
+  "desc": "Floating sticky quick-notes for Supernote. Tap the launcher bubble and a draggable post-it appears over your notebook or document; type on it with the keyboard. Lasso handwriting or select PDF text to capture it into a sticky note that links back to its page, and put a note's text back on the page as an editable text box. Notes and .txt exports live in MyStyle/Plugins/SuperStickyNote.",
   "iconPath": "assets/icon.png",
-  "versionName": "1.6.3",
-  "versionCode": "49",
+  "versionName": "2.0.0",
+  "versionCode": "50",
   "pluginID": "89zc2wykgjiw30i7",
   "pluginKey": "SuperStickyNote",
   "jsMainPath": "index",

@@ -156,7 +156,8 @@ This works in a **notebook** *and* on **handwritten annotations in a PDF or EPUB
 - The **lasso clears itself** once the text is captured. Your handwriting is untouched.
 - A **shapes-only** selection still makes a sticky note, describing what it found
   ("2 × Circle").
-- Turn on **Frame on capture** (§6) to box what you captured, on a notebook page.
+- Turn on **Frame on capture** (§6) to box what you captured — on a notebook page or a
+  document, since the frame is a drawn shape.
 
 ### Underline a word to label the note
 

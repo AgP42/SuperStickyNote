@@ -69,7 +69,8 @@ Text size, the bubble, the capture frame, backups — and every font you've drop
 ## Documentation
 
 Everything else — every gesture, the underline-to-label trick, exports and backups, and
-the known limits — is in the **[User Guide](USER_GUIDE.md)**.
+the known limits — is in the **[User Guide](USER_GUIDE.md)**. What changed in each
+release is in the **[Changelog](CHANGELOG.md)**.
 
 ## Build
 
