@@ -178,6 +178,8 @@ Every captured note keeps a **Go to source** backlink to its file and page.
 
 ## 8. Getting text back out
 
+![A sticky note's text placed on the page](docs/screenshots/back-to-page.png)
+
 - **Insert in note** — puts the sticky note's text on the **notebook page underneath**, as
   an editable text box, using the **Font** and **Text size** from Settings. The Manager
   closes so you land on the result. *(Notebooks only: a PDF page has no text boxes.)*
