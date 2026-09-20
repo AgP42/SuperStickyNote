@@ -3,10 +3,9 @@
 Public releases only. Each one is a `.snplg` on the
 [Releases page](https://github.com/AgP42/SuperStickyNote/releases).
 
-> **Firmware:** Supernote's firmware is called *Chauvet*; what matters is the version number
-> (device settings). **v1.0.0 and later** target **Chauvet 3.29.43 (Manta/Nomad) / 2.26.40
-> (A5 X / A6 X) or later**. Devices on an earlier Chauvet need **v0.9.1**. A build for one
-> firmware doesn't run on the other.
+> **Firmware:** Plugin version **v1.0.0 and later** need **Chauvet 3.29.43 (Manta/Nomad) /
+> 2.26.40 (A5 X / A6 X)** minimum. Devices on an earlier Chauvet need **v0.9.1**. A build
+> for one firmware doesn't run on the other.
 
 ## v2.0.0 — 2026-09-20
 
