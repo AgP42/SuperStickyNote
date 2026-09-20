@@ -5,8 +5,29 @@
  * Every token below is a dp value MEASURED on the native Digest screen of a
  * 1920x2560 @300dpi device, which Android reports as 1024 x 1365 dp. On any
  * other machine (A5X/A6X report 994 x 1325, smaller ones less) the tokens are
- * scaled by the ratio of the shortest edge, which is what Ratta's own demo
- * plugin does with its per-device table.
+ * scaled by the ratio of the shortest edge.
+ *
+ * WHERE THE APPROACH COMES FROM — Ratta's own demo plugin, the only published
+ * example of the native look:
+ *
+ *   github.com/Supernote-Ratta/sn-plugin-demo-sticker
+ *     src/styles/size/{a5,a5x2,nom}.js   px -> dp, one table per device family
+ *     src/styles/{xs,md,lg}.js           a StyleSheet per family, built on those
+ *     src/components/TitleBar.js         switches on the screen's dp WIDTH:
+ *                                        1024 | 1365 -> lg + a5x2 (this device)
+ *                                        994  | 1325 -> md + a5
+ *                                        else        -> xs + nom
+ *
+ * It writes every value in px of its design canvas and converts per device, so
+ * its "2" is 2 design px, which in our bucket (a5x2, dp_px_1 = 0.62) is
+ * 1.24 dp. THAT is why our old 2 dp borders read heavy: they were 2 dp, i.e.
+ * 1.6x the native chrome. Its title bar is dp_px_114 = 70.8 dp, which is where
+ * T.header comes from. We do not copy its files (that repo carries no licence);
+ * we took the method and re-measured our own values.
+ *
+ * No UI kit ships with the SDK: its rail is StickerGroupListView, a native view
+ * from react-native-sticker-lib, specific to the sticker demo. sn-plugin-lib
+ * 0.1.65 exports APIs only. Everything here is plain React Native.
  *
  * Read once at import: StyleSheet.create() below runs once too, so a rotation
  * keeps the scale it started with. The Manager is a portrait-first panel and
