@@ -48,7 +48,9 @@ export interface Note {
   // Backlink to where the note was captured (e.g. lasso→OCR): tap "Go to source"
   // to jump/open that file at that page. Absent on manually-created notes.
   sourceFile?: string;
-  sourcePage?: number; // 1-indexed, as returned by getCurrentPageNum
+  // The RAW value from getCurrentPageNum: 0-based, and shared with jumpToPage /
+  // openFile, so it round-trips untouched. Add 1 only to DISPLAY it.
+  sourcePage?: number;
   // Which app the capture came from: a NOTE lasso, or a DOC/PDF text selection.
   // Absent on notes made before 1.3 and on manually-created ones.
   sourceKind?: 'note' | 'doc';
@@ -341,12 +343,10 @@ export function setOpen(id: string, open: boolean): void {
 
 /** Close every open sticky in ONE store change, so the cards sync once. */
 export function closeAll(): void {
-  const now = Date.now();
   let changed = false;
   for (const n of cache) {
     if (n.open) {
-      n.open = false;
-      n.updatedAt = now;
+      n.open = false; // not an edit: updatedAt is the note's date in the list
       changed = true;
     }
   }

@@ -103,7 +103,8 @@ function fmtWhen(ts: number): string {
 function fmtSource(n: Note): string {
   if (!n.sourceFile) return '';
   const name = n.sourceFile.split('/').pop() || n.sourceFile;
-  return n.sourcePage == null ? name : `${name} - Page ${n.sourcePage}`;
+  // sourcePage is the firmware's 0-based index; the reader shows 1-based.
+  return n.sourcePage == null ? name : `${name} - Page ${n.sourcePage + 1}`;
 }
 
 /** The first non-empty line, minus the title line, on one line. */
@@ -476,6 +477,10 @@ const NoteCard = ({
       toast(`Max ${getMaxCards()} sticky notes on screen — close one first`);
       return;
     }
+    // A note captured at the on-screen limit was never placed. Without this it
+    // gets a position derived from its index in the open list, recomputed on
+    // every sync — so the card jumps whenever another one opens or closes.
+    if (!note.open) placeForOpen(note.id);
     setOpen(note.id, !note.open);
   };
   return (
@@ -632,6 +637,13 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
     }
   }, [note.body]);
   const [labelDraft, setLabelDraft] = useState('');
+  // Leaving this screen is the one moment the cards catch up: every keystroke
+  // here is written quietly (no per-character sync), so BOTH ways out must go
+  // through here or the floating card keeps — and then re-emits — stale text.
+  const done = useCallback(() => {
+    global.__ssnSyncCards?.();
+    onBack();
+  }, [onBack]);
   const [pickIcon, setPickIcon] = useState(false);
   const labels = note.labels || [];
   const suggestions = allLabels().filter(l => !labels.includes(l)).slice(0, 8);
@@ -649,14 +661,7 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
   };
   return (
     <View style={styles.fill}>
-      <Header
-        title="Note"
-        backLabel="Back"
-        onBack={() => {
-          global.__ssnSyncCards?.(); // one sync for the whole editing session
-          onBack();
-        }}
-      />
+      <Header title="Note" backLabel="Back" onBack={done} />
       <View style={styles.notePane}>
         <View style={styles.noteHead}>
           <TouchableOpacity
@@ -745,7 +750,7 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
 
         <View style={styles.grow} />
         <View style={styles.actionBar}>
-          <BarBtn label="Done" strong onPress={onBack} />
+          <BarBtn label="Done" strong onPress={done} />
           <BarBtn label="Copy" onPress={copy} />
           <BarBtn label="Insert in note" onPress={() => toNote(note)} />
           <BarBtn label="Export" onPress={() => exportNote(note)} />
@@ -755,7 +760,7 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
             danger
             onPress={() => {
               remove(note.id);
-              onBack();
+              done();
             }}
           />
         </View>
@@ -924,11 +929,17 @@ const SettingsScreen = ({
   openCount: number;
   onBack: () => void;
 }) => {
+  const maxDraftRef = useRef('');
+  /** Clamp and store whatever is in the box; the store holds the bounded truth. */
+  const commitMax = () => {
+    setMaxCards(parseInt(maxDraftRef.current, 10) || getMaxCards());
+  };
   const [fonts, setFonts] = useState<FontInfo[]>([]);
   const [, force] = useState(0);
   const bump = () => force(n => n + 1);
   const samples = useFontSamples(fonts);
   const [maxDraft, setMaxDraft] = useState(String(getMaxCards()));
+  maxDraftRef.current = maxDraft;
   useEffect(() => {
     StickyNative?.listFonts().then(setFonts).catch(() => setFonts([]));
   }, []);
@@ -969,7 +980,14 @@ const SettingsScreen = ({
 
   return (
     <View style={styles.fill}>
-      <Header title="Settings" backLabel="Back" onBack={onBack} />
+      <Header
+        title="Settings"
+        backLabel="Back"
+        onBack={() => {
+          commitMax(); // the field may never fire onBlur when it is unmounted
+          onBack();
+        }}
+      />
       <View style={styles.notePane}>
         <SettingRow label="Text size" hint="Sticky notes and titles">
           {FONT_KEYS.map(k => (
@@ -1064,10 +1082,14 @@ const SettingsScreen = ({
             value={maxDraft}
             // Committed on blur only: writing settings.json per digit meant a
             // file write (and a re-render) for every keypress.
-            onChangeText={t => setMaxDraft(t.replace(/[^0-9]/g, ''))}
+            onChangeText={t => {
+              const digits = t.replace(/[^0-9]/g, '');
+              maxDraftRef.current = digits;
+              setMaxDraft(digits);
+            }}
             onBlur={() => {
               // Whatever was left in the box, the store holds the clamped truth.
-              setMaxCards(parseInt(maxDraft, 10) || getMaxCards());
+              commitMax();
               setMaxDraft(String(getMaxCards()));
               bump();
             }}
