@@ -7,6 +7,7 @@
 import {NativePluginManager} from 'sn-plugin-lib';
 import {
   StickyNative,
+  MAX_CARDS,
   EXPORT_DIR,
   JSON_BACKUP,
   LEGACY_DIR,
@@ -47,7 +48,12 @@ export interface Note {
   // Backlink to where the note was captured (e.g. lasso→OCR): tap "Go to source"
   // to jump/open that file at that page. Absent on manually-created notes.
   sourceFile?: string;
-  sourcePage?: number; // 1-indexed, as returned by getCurrentPageNum
+  // The RAW value from getCurrentPageNum: 0-based, and shared with jumpToPage /
+  // openFile, so it round-trips untouched. Add 1 only to DISPLAY it.
+  sourcePage?: number;
+  // Which app the capture came from: a NOTE lasso, or a DOC/PDF text selection.
+  // Absent on notes made before 1.3 and on manually-created ones.
+  sourceKind?: 'note' | 'doc';
 }
 
 let cache: Note[] = [];
@@ -58,22 +64,44 @@ let bubbleHidden = false; // hide the ✚ launcher bubble
 export type FrameStyle = 'off' | 'black' | 'grey1' | 'grey2';
 export const FRAME_STYLES: FrameStyle[] = ['off', 'black', 'grey1', 'grey2'];
 let frameStyle: FrameStyle = 'off';
+/** How many sticky notes the user allows on screen at once (1…MAX_CARDS). */
+let maxCards = 8;
+export const DEFAULT_MAX_CARDS = 8;
+/** Past this many, the overlay windows start to tell on the device. */
+export const SAFE_MAX_CARDS = 8;
 let loaded = false;
 let notesPath = '';
 let settingsPath = '';
-const listeners = new Set<() => void>();
+/**
+ * `fromCard` = the change was typed in the floating card itself, so the native
+ * side is ALREADY up to date: re-syncing it would push a (by then stale) body
+ * back into the EditText the user is typing in. Subscribers use it to skip the
+ * native card sync while still re-rendering the Manager.
+ */
+export interface NotifyOpts {
+  fromCard?: boolean;
+  /**
+   * The floating cards are ALREADY right (or unconcerned): re-render the
+   * Manager, but skip the native card sync. Used by the Manager's own text
+   * editor — syncing per keystroke pushed a full payload for every open card
+   * across the bridge and repainted each overlay.
+   */
+  quiet?: boolean;
+}
+type Listener = (opts?: NotifyOpts) => void;
+const listeners = new Set<Listener>();
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let seq = 0;
 
-function notify(): void {
+function notify(opts?: NotifyOpts): void {
   listeners.forEach(l => {
     try {
-      l();
+      l(opts);
     } catch {}
   });
 }
 
-export function subscribe(cb: () => void): () => void {
+export function subscribe(cb: Listener): () => void {
   listeners.add(cb);
   return () => listeners.delete(cb);
 }
@@ -136,6 +164,7 @@ export async function initStore(): Promise<void> {
     if (s && typeof s.font === 'string' && s.font) fontSel = s.font;
     else if (s && typeof s.fontPath === 'string' && s.fontPath) fontSel = s.fontPath; // migrate
     if (s && typeof s.bubbleHidden === 'boolean') bubbleHidden = s.bubbleHidden;
+    if (s && typeof s.maxCards === 'number') maxCards = clampMax(s.maxCards);
     if (s && typeof s.frameStyle === 'string' && FRAME_STYLES.includes(s.frameStyle)) {
       frameStyle = s.frameStyle;
     } else if (s && (s.frameOnCapture === true || typeof s.frameStyle === 'string')) {
@@ -150,8 +179,26 @@ export async function initStore(): Promise<void> {
 function saveSettings(): void {
   StickyNative?.writeFile(
     settingsPath,
-    JSON.stringify({fontKey, font: fontSel, bubbleHidden, frameStyle}),
+    JSON.stringify({fontKey, font: fontSel, bubbleHidden, frameStyle, maxCards}),
   ).catch(() => {});
+}
+
+// ---- How many sticky notes may float at once -----------------------------
+
+function clampMax(n: number): number {
+  if (!isFinite(n)) return DEFAULT_MAX_CARDS;
+  return Math.max(1, Math.min(MAX_CARDS, Math.round(n)));
+}
+
+export function getMaxCards(): number {
+  return maxCards;
+}
+
+/** Set the user's on-screen maximum. Lowering it never closes what is open. */
+export function setMaxCards(n: number): void {
+  maxCards = clampMax(n);
+  saveSettings();
+  notify({quiet: true});
 }
 
 // ---- Frame-on-capture (mark captured text on the note) --------------------
@@ -163,7 +210,7 @@ export function getFrameStyle(): FrameStyle {
 export function setFrameStyle(s: FrameStyle): void {
   frameStyle = s;
   saveSettings();
-  notify();
+  notify({quiet: true});
 }
 
 // ---- Bubble (✚ launcher) visibility -------------------------------------
@@ -264,12 +311,12 @@ export function create(icon: string): Note {
   return note;
 }
 
-export function update(id: string, patch: Partial<Note>): void {
+export function update(id: string, patch: Partial<Note>, opts?: NotifyOpts): void {
   const n = cache.find(x => x.id === id);
   if (!n) return;
   Object.assign(n, patch, {updatedAt: Date.now()});
   scheduleSave();
-  notify();
+  notify(opts);
 }
 
 /** Geometry updates skip the notify() (drag is native; no React re-render needed). */
@@ -292,6 +339,20 @@ export function setSize(id: string, w: number, h: number): void {
 
 export function setOpen(id: string, open: boolean): void {
   update(id, {open});
+}
+
+/** Close every open sticky in ONE store change, so the cards sync once. */
+export function closeAll(): void {
+  let changed = false;
+  for (const n of cache) {
+    if (n.open) {
+      n.open = false; // not an edit: updatedAt is the note's date in the list
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  scheduleSave();
+  notify();
 }
 
 /**

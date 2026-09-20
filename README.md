@@ -1,58 +1,76 @@
 # SuperStickyNote
 
-Floating sticky quick-notes for Supernote e-ink devices. A small **✚ bubble** floats
-over everything; tap it and a **sticky note** appears on top of your notebook or document.
-Write with the keyboard, drag it around, keep several open at once — your thoughts land
-on the page without ever leaving what you were doing.
+Floating sticky quick-notes for Supernote e-ink devices. Tap the bubble and a **sticky
+note** appears on top of your notebook or document — type, drag it aside, keep several
+open. Your thoughts land on the page without ever leaving what you were doing.
 
-![SuperStickyNote in action](docs/screenshots/hero.png)
+And it works the other way round: **lasso your handwriting** or **select text in a PDF**,
+and it becomes a sticky note that remembers where it came from.
 
-## Features
+![Sticky notes floating over a notebook page, and a note's text placed back on it](docs/screenshots/hero.png)
 
-- Floating sticky notes over the **NOTE** and **DOCUMENT** apps — up to **8 on screen**, overlapping
-- **Single-tap** inline keyboard editing, auto-saved; **collapse**, **move**, **resize**, long notes scroll
-- **Labels** with a filter (and an "Untagged" filter); **search**
-- **Lasso → Add to StickyNote**: OCR handwriting straight into a new sticky note. The lasso **clears itself** once captured, an optional **frame** (black or grey) can be drawn around the text on the note, and each note keeps a **↪ Source** backlink to jump/open the page it came from
-- Edit a note's **text, icon and labels** from the list, with **copy / paste**
-- **Text size** XS→XXL and **fonts** (Sans/Serif/Mono + your own from `MyStyle/fonts`); **show/hide** the ✚ bubble; **frame** captured text — all under a collapsible **Configuration** section
-- Live preview: open sticky notes stay on top of the Manager, so font/size changes show in real time
-- **Export** to `.txt`, **backup/restore** to `.json` (import merges, never overwrites)
-- Notes stored **privately** (not cloud-synced)
+## What it does
 
-> Text only for now — handwriting inside a sticky note isn't supported yet.
+- **Sticky notes that float** over the NOTE and DOCUMENT apps — type, collapse, move,
+  resize. 8 on screen by default, up to 40 if you want them.
+- **Capture handwriting** with the lasso: it's recognised and dropped into a new sticky
+  note, in a notebook *or* on a PDF annotation.
+- **Capture PDF text**: select it, tap the plugin button in the selection toolbar. No
+  recognition needed.
+- **Put text back on the page** as an editable text box, in the font and size you chose.
+- **Find them again**: every captured note links back to its file and page; filter by
+  label, search the lot.
 
-> **Which version do I need?** Supernote's firmware is called *Chauvet* — that's the
-> platform name, so what matters is the version number (check it in device settings). This
-> release (**v1.0.0**) targets **Chauvet 3.29.43 (Manta/Nomad) / 2.26.40 (A5 X / A6 X) or
-> later** — the developer-preview builds that add the new plugin permission system and other
-> breaking plugin-API changes. A build made for one firmware version doesn't run on the
-> other: devices on an earlier Chauvet need the previous release, and once these versions
-> ship widely v1.0.0 becomes the main build. Installing the wrong one shows *"package not
-> compatible"* or the plugin does nothing. Verified on Nomad.
+## Capture from the page
 
-## Demos
+Lasso handwriting in a notebook and it is recognised straight into a new sticky note.
 
-**Lasso handwriting → sticky note (OCR)**
+![Lassoed handwriting captured into a sticky note](docs/screenshots/lasso-capture.png)
 
-![Lasso to sticky](docs/lasso-demo.gif)
+The same works on a **PDF**: lasso a handwritten annotation, or select the document's own
+text and tap SuperStickyNote in the selection toolbar (circled below).
 
-**Frame the captured text on the note (black or grey) — each sticky keeps a ↪ Source backlink**
+![The selection toolbar in a PDF, with the plugin's button circled](docs/screenshots/pdf-selection.png)
 
-![Framed captures on the note](docs/screenshots/frame-on-note.png)
+![A handwritten PDF annotation captured as a sticky note](docs/screenshots/pdf-lasso-sticky.png)
 
-**Sticky note → note → export**
+## Back to the page
 
-![Sticky note to note and export](docs/sticky-to-note-export-demo.gif)
+A sticky note isn't a dead end: its text goes back onto the notebook page as a real,
+editable text box — the second half of the first picture above.
+
+## The Manager
+
+Filters with counts on the left, search above the list, and the selected note's actions
+right under it.
+
+![The Manager](docs/screenshots/manager.png)
+
+## Settings
+
+Text size, the bubble, the capture frame, backups — and every font you've dropped in
+`MyStyle/fonts`, each shown in its own typeface.
+
+![Settings](docs/screenshots/settings.png)
 
 ## Install
 
 1. Copy `superstickynote-<version>.snplg` (see [Releases](../../releases/latest)) to `MyStyle/` on the device.
 2. **Settings → Apps → Plugins → Add Plugin** → pick the file.
-3. Open a notebook — the ✚ bubble appears.
+3. Open a notebook — the bubble appears.
+
+> **Which version do I need?** Supernote's firmware is called *Chauvet* — that's the
+> platform name, so what matters is the version number (check it in device settings). This
+> release targets **Chauvet 3.29.43 (Manta/Nomad) / 2.26.40 (A5 X / A6 X) or later**. A
+> build made for one firmware version doesn't run on the other: devices on an earlier
+> Chauvet need the previous release. Installing the wrong one shows *"package not
+> compatible"* or the plugin does nothing. Verified on Manta/Nomad.
 
 ## Documentation
 
-See the **[User Guide](USER_GUIDE.md)** for the full walkthrough and gesture reference.
+Everything else — every gesture, the underline-to-label trick, exports and backups, and
+the known limits — is in the **[User Guide](USER_GUIDE.md)**. What changed in each
+release is in the **[Changelog](CHANGELOG.md)**.
 
 ## Build
 

@@ -7,5 +7,6 @@ export const ICONS = [
   '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
 ];
 
-// '❏' (a page/sticky glyph) — the closest text glyph to the plugin's sticker icon.
-export const DEFAULT_ICON = ICONS[0];
+// The pencil: a new sticky is something you are about to write on. '❏' read as
+// an empty checkbox on the device, which promised a to-do the plugin doesn't do.
+export const DEFAULT_ICON = ICONS[2]; // '✎'
