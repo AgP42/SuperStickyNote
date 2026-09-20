@@ -638,7 +638,13 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
             // and — because setText() collapses the selection — drop the caret to 0,
             // scrambling the sentence being typed (device 2026-09-20).
             boolean staleEcho = rev >= 0 && rev < c.rev;
-            if (!c.editing && !staleEcho && !c.body.getText().toString().equals(body)) {
+            // The point of skipping while editing is to not yank the text from
+            // under someone's fingers. But Android keeps VIEW focus when a window
+            // loses WINDOW focus, so opening the Manager left c.editing true and
+            // the card then ignored every update from it until it was closed and
+            // reopened. Nobody can be typing here without window focus.
+            boolean typingHere = c.editing && c.view != null && c.view.hasWindowFocus();
+            if (!typingHere && !staleEcho && !c.body.getText().toString().equals(body)) {
                 int sel = c.body.getSelectionStart();
                 c.muteWatcher = true;
                 c.body.setText(body);

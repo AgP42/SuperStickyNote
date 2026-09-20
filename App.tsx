@@ -75,6 +75,26 @@ declare const global: {
   __ssnSyncCards?: () => Promise<void>;
 };
 
+let syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Push the store onto the floating cards once the typing settles. */
+function syncCardsSoon(): void {
+  if (syncTimer) clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => {
+    syncTimer = null;
+    global.__ssnSyncCards?.();
+  }, 300);
+}
+
+/** Push now, cancelling any pending catch-up (leaving a screen, closing it). */
+function syncCardsNow(): void {
+  if (syncTimer) {
+    clearTimeout(syncTimer);
+    syncTimer = null;
+  }
+  global.__ssnSyncCards?.();
+}
+
 function toast(msg: string) {
   try {
     ToastAndroid.show(msg, ToastAndroid.SHORT);
@@ -641,7 +661,7 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
   // here is written quietly (no per-character sync), so BOTH ways out must go
   // through here or the floating card keeps — and then re-emits — stale text.
   const done = useCallback(() => {
-    global.__ssnSyncCards?.();
+    syncCardsNow();
     onBack();
   }, [onBack]);
   const [pickIcon, setPickIcon] = useState(false);
@@ -704,8 +724,10 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
           onChangeText={txt => {
             mine.current = txt;
             setDraft(txt);
-            // quiet: the cards catch up once, when this screen closes.
+            // quiet: no sync per character — syncCardsSoon does it on the pause,
+            // so the floating card shows the edit while it is being made.
             update(note.id, {body: txt}, {quiet: true});
+            syncCardsSoon();
           }}
         />
 
