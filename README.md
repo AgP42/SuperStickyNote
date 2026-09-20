@@ -7,7 +7,7 @@ open. Your thoughts land on the page without ever leaving what you were doing.
 And it works the other way round: **lasso your handwriting** or **select text in a PDF**,
 and it becomes a sticky note that remembers where it came from.
 
-![Sticky notes floating over a notebook page](docs/screenshots/hero.png)
+![Sticky notes floating over a notebook page, and a note's text placed back on it](docs/screenshots/hero.png)
 
 ## What it does
 
@@ -21,23 +21,23 @@ and it becomes a sticky note that remembers where it came from.
 - **Find them again**: every captured note links back to its file and page; filter by
   label, search the lot.
 
-## Capture from a PDF
+## Capture from the page
 
-Select text with the reader's text tool, then tap SuperStickyNote in the selection
-toolbar that pops up.
+Lasso handwriting in a notebook and it is recognised straight into a new sticky note.
 
-![The selection toolbar in a PDF](docs/screenshots/pdf-selection.png)
+![Lassoed handwriting captured into a sticky note](docs/screenshots/lasso-capture.png)
 
-Handwritten annotations on a PDF work too — lasso them exactly as you would in a notebook.
+The same works on a **PDF**: lasso a handwritten annotation, or select the document's own
+text and tap SuperStickyNote in the selection toolbar (circled below).
+
+![The selection toolbar in a PDF, with the plugin's button circled](docs/screenshots/pdf-selection.png)
 
 ![A handwritten PDF annotation captured as a sticky note](docs/screenshots/pdf-lasso-sticky.png)
 
 ## Back to the page
 
 A sticky note isn't a dead end: its text goes back onto the notebook page as a real,
-editable text box.
-
-![A sticky note's text placed on the page](docs/screenshots/back-to-page.png)
+editable text box — the second half of the first picture above.
 
 ## The Manager
 

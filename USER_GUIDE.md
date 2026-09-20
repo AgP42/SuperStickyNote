@@ -132,7 +132,6 @@ right now wears its icon in a black square. The list is **paged**: use
   with the lasso, optionally draw a thin box **on the note** around what you captured, so
   you can see at a glance what was turned into a sticky note. A single thin line you can
   erase in one stroke. **Grey 1** is darker, **Grey 2** lighter. Default **Off**.
-  *(Notebooks only — nothing is ever drawn on a PDF.)*
 - **Backup** — see §8.
 - **Sticky notes on screen** — how many may float at once: **8** by default, anything
   from **1 to 40**. Above 8 you'll see a warning: every floating note is a system overlay,
@@ -150,6 +149,8 @@ is recognised and dropped into a **new sticky note**. Recognition takes a few se
 
 This works in a **notebook** *and* on **handwritten annotations in a PDF or EPUB**.
 
+![Lassoed handwriting captured into a sticky note](docs/screenshots/lasso-capture.png)
+
 ![A handwritten PDF annotation captured as a sticky note](docs/screenshots/pdf-lasso-sticky.png)
 
 - The **lasso clears itself** once the text is captured. Your handwriting is untouched.
@@ -166,9 +167,9 @@ words, get three labels. No underline, nothing happens — an ordinary capture i
 ### PDF text → sticky note
 
 Select text in a **PDF or EPUB** with the reader's text tool, then tap
-**Add to StickyNote** in the selection toolbar that pops up.
+**Add to StickyNote** in the selection toolbar that pops up — the circled button below.
 
-![The selection toolbar in a PDF](docs/screenshots/pdf-selection.png)
+![The selection toolbar in a PDF, with the plugin's button circled](docs/screenshots/pdf-selection.png)
 
 No recognition needed — the text is already text, so the sticky note appears instantly.
 
@@ -177,8 +178,6 @@ Every captured note keeps a **Go to source** backlink to its file and page.
 ---
 
 ## 8. Getting text back out
-
-![A sticky note's text placed on the page](docs/screenshots/back-to-page.png)
 
 - **Insert in note** — puts the sticky note's text on the **notebook page underneath**, as
   an editable text box, using the **Font** and **Text size** from Settings. The Manager
@@ -211,13 +210,17 @@ cloud sync can't corrupt them. Backups and exports go to the visible
   pen has a hardware path into the notebook that a plugin overlay can't intercept. Two ways
   around it: drag with your **finger**, or first select the **eraser** or **lasso** tool —
   then you can drag and resize with the pen without leaving a stroke.
-- **Frames and Insert in note are notebook-only.** A PDF page can't take our box or our
-  text box; capturing *from* a PDF works fine.
+- **Insert in note is notebook-only.** A PDF page can't hold a text box. Capturing *from*
+  a PDF works fine, and so does the capture frame — that one is a drawn shape, which a
+  document accepts.
 - **Pasting from other apps is limited by Android.** Since Android 10 an app may only read
   the clipboard while it holds the screen's focus, which a plugin doesn't — so text copied
   in another app can't be pulled into a sticky note. Copying *out* works.
 - **Above 8 floating notes**, expect the device to get slower: each one is a system window.
-- **Uninstalling leaves the bubble on screen** — **restart the device** to clear it.
+- **If the bubble survives an uninstall**, restart the device. The plugin now clears its
+  own overlays when it is torn down — reinstalling no longer leaves anything behind — but
+  the bubble is a system window owned by the plugin host, so a teardown that never reaches
+  us can still strand it.
 - If a sticky note ever gets stuck after a firmware hiccup, force-stopping the plugin host
   (or restarting the device) clears any stray window.
 

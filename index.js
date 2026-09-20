@@ -313,7 +313,10 @@ async function handleLassoToSticky() {
     const textEls = (els || []).filter(e => e && !SHAPE_TYPES.has(e.type));
     // Grab the lasso bounds NOW (before we clear the selection) in case the user
     // enabled a "mark captured text" style below.
-    const frameStyle = isNote ? getFrameStyle() : 'off';
+    // The frame is a geometry polygon, and a document takes those just fine — it
+    // is only TEXT boxes a PDF can't hold. (SuperDashboard draws the same box on a
+    // PDF to-do.) So the frame follows the setting everywhere.
+    const frameStyle = getFrameStyle();
     let lassoRect = null;
     if (frameStyle !== 'off') {
       try {
