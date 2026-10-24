@@ -58,6 +58,16 @@ export interface Note {
   // page with insertSticker, `png` is its picture on the card and in the Manager.
   // Both live in the private data dir. Absent on typed and text-only captures.
   ink?: Ink;
+  // What was written with the pen IN the card: `strokes` is the vector JSON the
+  // card draws from, `png` its picture for the Manager. Private data dir.
+  drawing?: Drawing;
+}
+
+export interface Drawing {
+  strokes: string;
+  png: string;
+  w: number; // png px
+  h: number;
 }
 
 export interface Ink {
@@ -148,6 +158,10 @@ export async function initStore(): Promise<void> {
   notesPath = `${dataDir}/notes.json`;
   settingsPath = `${dataDir}/settings.json`;
   inkPath = `${dataDir}/ink`;
+  try {
+    await StickyNative?.ensureDir(inkPath);
+    await StickyNative?.setInkDir(inkPath);
+  } catch {}
 
   try {
     await StickyNative?.ensureDir(dataDir);
@@ -248,6 +262,27 @@ export function setCaptureMode(m: CaptureMode): void {
 export async function inkDir(): Promise<string> {
   await StickyNative?.ensureDir(inkPath);
   return inkPath;
+}
+
+/** Only files in OUR ink folder are ever deleted: an imported backup can point anywhere. */
+function deleteInkFile(f: string | undefined): void {
+  if (f && inkPath && f.startsWith(`${inkPath}/`)) {
+    StickyNative?.deleteFile(f).catch(() => {});
+  }
+}
+
+/**
+ * The card saved (or emptied) its drawing. The PNG gets a new name on every
+ * save, because the Manager's Image caches by URI; the old one goes.
+ */
+export function setDrawing(id: string, d: Drawing | undefined): void {
+  const n = cache.find(x => x.id === id);
+  if (!n) return;
+  const old = n.drawing;
+  if (old?.png && old.png !== d?.png) deleteInkFile(old.png);
+  if (old?.strokes && !d) deleteInkFile(old.strokes);
+  // fromCard: the card already shows it, no need to sync it back.
+  update(id, {drawing: d}, {fromCard: true});
 }
 
 // ---- Bubble (✚ launcher) visibility -------------------------------------
@@ -410,13 +445,8 @@ export function placeForOpen(id: string): void {
 export function remove(id: string): void {
   const gone = cache.find(n => n.id === id);
   cache = cache.filter(n => n.id !== id);
-  // Only files in OUR ink folder: an imported backup can point anywhere.
-  if (gone?.ink) {
-    for (const f of [gone.ink.sticker, gone.ink.png]) {
-      if (f && inkPath && f.startsWith(`${inkPath}/`)) {
-        StickyNative?.deleteFile(f).catch(() => {});
-      }
-    }
+  for (const f of [gone?.ink?.sticker, gone?.ink?.png, gone?.drawing?.strokes, gone?.drawing?.png]) {
+    deleteInkFile(f);
   }
   scheduleSave();
   notify();
@@ -433,7 +463,7 @@ export function allLabels(): string[] {
 
 export function title(n: Note): string {
   const first = n.body.split('\n').find(l => l.trim().length > 0);
-  return first ? first.trim() : n.ink ? 'Handwritten note' : 'Untitled';
+  return first ? first.trim() : n.ink || n.drawing ? 'Handwritten note' : 'Untitled';
 }
 
 export function preview(n: Note): string {
@@ -441,7 +471,7 @@ export function preview(n: Note): string {
   // Drop the title line from the preview so it isn't shown twice on the card.
   const firstIdx = lines.findIndex(l => l.trim().length > 0);
   const rest = lines.slice(firstIdx + 1).join('\n').trim();
-  return rest || (n.body.trim() || n.ink ? '' : '(empty)');
+  return rest || (n.body.trim() || n.ink || n.drawing ? '' : '(empty)');
 }
 
 export function toCardPayload(n: Note): CardPayload {
@@ -458,6 +488,7 @@ export function toCardPayload(n: Note): CardPayload {
     labels: n.labels || [],
     font: fontSel,
     ink: n.ink?.png || '',
+    drawing: n.drawing?.strokes || '',
   };
 }
 

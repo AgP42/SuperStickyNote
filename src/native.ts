@@ -16,6 +16,7 @@ export interface CardPayload {
   labels: string[]; // shown as chips in the card header (display only)
   font: string; // font file path from MyStyle/fonts, or '' for system default
   ink: string; // PNG of the captured handwriting, or '' for none
+  drawing: string; // strokes JSON of what was written in the card, or ''
 }
 
 interface StickyNativeType {
@@ -31,6 +32,8 @@ interface StickyNativeType {
   readTextFile(path: string): Promise<string>;
   deleteFile(path: string): Promise<boolean>;
   fileExists(path: string): Promise<boolean>;
+  setInkDir(path: string): Promise<boolean>;
+  setNotePen(type: number, width: number, color: number): Promise<boolean>;
   ensureDir(path: string): Promise<boolean>;
   clipboardSet(text: string): Promise<boolean>;
   clipboardGet(): Promise<string>;

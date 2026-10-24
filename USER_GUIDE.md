@@ -61,6 +61,7 @@ writing in your notebook in the gaps between sticky notes.
 | **Drag the header** | Move the sticky note |
 | **Drag the ◢ corner** | Resize (bottom-right) |
 | **Long-press the body** | Copy / Paste bar |
+| **✎ (top-right)** | Write on it with the pen; **✓** to finish (below) |
 | **✕ (top-right)** | Close the sticky note (it stays saved in the list) |
 
 - **Saving is automatic** — text is saved as you type; tapping outside the sticky note also closes the keyboard.
@@ -71,6 +72,19 @@ writing in your notebook in the gaps between sticky notes.
   (§6). At the limit, creating another keeps it in the list instead of dropping one.
   **No limit** on total notes.
 - **Move it with a finger, not the pen** — see *Good to know* below.
+
+### Writing on a sticky note with the pen
+
+Tap **✎** in a floating card's header. A framed writing area opens: write with the pen,
+then tap **✓**. The ink shows as you write, and nothing is written on the page under the
+card.
+
+- The drawing is **kept**: it stays on the card and in the Manager. Tap ✎ again to add
+  to it.
+- Turn the pen over: the **eraser end** removes whole strokes.
+- Writing also ends when you touch the page **with the pen** outside the card, close the
+  card, or open the Manager. A finger or a resting palm doesn't end it.
+- Move the card by its header with a **finger** while writing.
 
 ---
 
@@ -111,6 +125,7 @@ right now wears its icon in a black square. The list is **paged**: use
 
 - **Handwriting** — only on notes captured with the ink kept (§7): what you wrote, as
   you wrote it. Read-only.
+- **Drawing** — what you wrote with the pen in the card (§3), with **Delete drawing**.
 - **Text** — edit the whole note. The same note can be open in its floating card at the
   same time; both stay in step.
 - **Icon** — tap the icon beside the title to change it (symbols and digits 0–9).
@@ -222,8 +237,11 @@ cloud sync can't corrupt them. Backups and exports go to the visible
 
 ## 10. Good to know / limits
 
-- **No writing with the pen inside a sticky note** — the keyboard types in a card; for
-  handwriting, write on the page and capture it (§7). Captured handwriting is read-only.
+- **Writing with the pen in a sticky note** (✎) needs Supernote's firmware ink service;
+  on a device without it, ✎ tells you so. A drawing can't be put back on the page yet.
+  Captured handwriting is read-only.
+- **If the pen ever stops writing in the notebook** after writing in a card, tap a pen
+  tool in the notebook's toolbar: that resets the pen.
 - **Moving a sticky note with the pen also draws on the note underneath** — the Supernote
   pen has a hardware path into the notebook that a plugin overlay can't intercept. Two ways
   around it: drag with your **finger**, or first select the **eraser** or **lasso** tool —

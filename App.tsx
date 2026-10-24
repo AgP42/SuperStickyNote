@@ -61,6 +61,7 @@ import {
   exportJson,
   importJson,
   title as noteTitle,
+  setDrawing,
   Note,
 } from './src/store';
 import {ICONS} from './src/icons';
@@ -523,9 +524,9 @@ const NoteCard = ({
           {noteTitle(note)}
         </Text>
       </View>
-      {note.ink ? (
+      {note.drawing?.png || note.ink ? (
         <View style={styles.cardInk}>
-          <InkImage ink={note.ink} maxH={T.lhBody * 2} />
+          <InkImage ink={note.drawing?.png ? note.drawing : note.ink!} maxH={T.lhBody * 2} />
         </View>
       ) : (
         <Text
@@ -657,12 +658,15 @@ const EDITOR_H = dp(330);
  * The capture's PNG at its own size (px → dp), shrunk to fit `maxH` — never
  * blown up, so a single word stays a word. Left-aligned like the text.
  */
-function inkSize(ink: NonNullable<Note['ink']>, maxH: number) {
+/** A PNG of handwriting: a lasso capture or a drawing made in the card. */
+type InkPic = {png: string; w: number; h: number};
+
+function inkSize(ink: InkPic, maxH: number) {
   const k = Math.min(1 / PixelRatio.get(), maxH / Math.max(1, ink.h));
   return {width: ink.w * k, height: ink.h * k};
 }
 
-const InkImage = ({ink, maxH}: {ink: NonNullable<Note['ink']>; maxH: number}) => {
+const InkImage = ({ink, maxH}: {ink: InkPic; maxH: number}) => {
   return (
     <Image
       source={{uri: `file://${ink.png}`}}
@@ -703,6 +707,10 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
   const labels = note.labels || [];
   const suggestions = allLabels().filter(l => !labels.includes(l)).slice(0, 8);
   const source = fmtSource(note);
+  // A capture AND a drawing share the room the handwriting borrows from the editor.
+  const pics = [note.ink, note.drawing?.png ? note.drawing : undefined].filter(Boolean) as InkPic[];
+  const inkH = pics.length > 1 ? INK_DETAIL_H / 2 : INK_DETAIL_H;
+  const inkTaken = pics.reduce((t, p) => t + inkSize(p, inkH).height + dp(30), 0);
 
   const addLabel = (raw: string) => {
     const l = raw.trim();
@@ -751,7 +759,24 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
         {!!note.ink && (
           <>
             <Text style={styles.fieldLabel}>Handwriting</Text>
-            <InkImage ink={note.ink} maxH={INK_DETAIL_H} />
+            <InkImage ink={note.ink} maxH={inkH} />
+          </>
+        )}
+        {!!note.drawing?.png && (
+          <>
+            <View style={styles.row}>
+              <Text style={styles.fieldLabel}>Drawing</Text>
+              <View style={styles.grow} />
+              <TouchableOpacity
+                style={styles.drawDel}
+                onPress={() => {
+                  setDrawing(note.id, undefined);
+                  syncCardsNow(); // the card drops its drawing too
+                }}>
+                <Text style={styles.chipTxt}>Delete drawing</Text>
+              </TouchableOpacity>
+            </View>
+            <InkImage ink={note.drawing} maxH={inkH} />
           </>
         )}
 
@@ -761,9 +786,7 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
             styles.editor,
             // The handwriting borrows its height from the editor, so the action
             // bar stays where it always is.
-            note.ink && {
-              height: Math.max(dp(110), EDITOR_H - inkSize(note.ink, INK_DETAIL_H).height - dp(30)),
-            },
+            inkTaken > 0 && {height: Math.max(dp(110), EDITOR_H - inkTaken)},
             {fontFamily: rnFamily()},
           ]}
           multiline
@@ -1463,6 +1486,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ink: {alignSelf: 'flex-start'},
+  drawDel: {
+    marginTop: dp(10),
+    paddingHorizontal: dp(10),
+    paddingVertical: dp(4),
+    borderWidth: T.hair,
+    borderColor: BLACK,
+    borderRadius: T.radCard,
+  },
   cardBody: {
     height: T.lhBody * 2,
     marginTop: dp(6),

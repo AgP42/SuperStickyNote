@@ -30,6 +30,7 @@ import {
   getFrameStyle,
   getCaptureMode,
   inkDir,
+  setDrawing,
   flush,
 } from './src/store';
 import {ensureFilePermissions} from './src/permissions';
@@ -458,6 +459,27 @@ async function handleLassoToSticky() {
     ToastAndroid.show(`Capture error: ${e && e.message}`, ToastAndroid.SHORT);
   }
 }
+
+// ---- Writing with the pen in a card -----------------------------------------
+// The card claims the pen from the note while it is written on; when it gives
+// the pen back, the note must write with ITS pen again, which only the SDK knows.
+DeviceEventEmitter.addListener('onCardWriting', async () => {
+  try {
+    const r = await PluginCommAPI.getPenInfo();
+    const pen = r && r.success ? r.result : null;
+    if (pen && [pen.type, pen.width, pen.color].every(Number.isFinite)) {
+      await StickyNative?.setNotePen(pen.type, pen.width, pen.color);
+    } else {
+      blog(`[ink] no usable pen info: ${JSON.stringify(r || null)}`);
+    }
+  } catch (e) {
+    blog(`[ink] getPenInfo failed: ${e && e.message}`);
+  }
+});
+
+DeviceEventEmitter.addListener('onCardDrawn', ({id, count, strokes, png, w, h}) => {
+  setDrawing(id, count > 0 && strokes ? {strokes, png: png || '', w: w || 0, h: h || 0} : undefined);
+});
 
 // Tapping a card's icon opens the Manager (full list).
 DeviceEventEmitter.addListener('onOpenManager', async () => {

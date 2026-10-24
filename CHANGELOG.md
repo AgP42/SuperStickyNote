@@ -7,6 +7,28 @@ Public releases only. Each one is a `.snplg` on the
 > 2.26.40 (A5 X / A6 X)** minimum. Devices on an earlier Chauvet need **v0.9.1**. A build
 > for one firmware doesn't run on the other.
 
+## v2.2.0 — 2026-10-24
+
+Write on a sticky note with the pen.
+
+- **✎ on a floating card** turns it into a writing area: write with the pen, tap **✓**
+  to finish. The ink shows live, as fast as in a notebook, and **nothing lands on the
+  page under the card**.
+- The drawing is **saved**: it stays on the card, comes back when the card is reopened,
+  and shows in the Manager list and on the note page. Tap ✎ again to add to it.
+- The pen's **eraser end** removes whole strokes.
+- Writing also ends when the pen touches the page outside the card, when the card is
+  closed, or when the Manager opens — the pen always goes back to the notebook, with
+  its own pen.
+- **Delete drawing** on the note page removes it.
+- Not yet: putting a drawing back on the page as ink. Backups (.json) don't carry
+  drawings, like captured handwriting.
+
+How it works: the card borrows the pen from the notebook through Supernote's firmware
+ink service, the same one the notebook uses when a plugin opens. The binder contract is
+ported from [sn-canvas](https://github.com/j-raghavan/sn-canvas) (MIT, © 2026
+JRaghavan). On a device without that service, ✎ says so and does nothing.
+
 ## v2.1.0 — 2026-10-18
 
 Handwriting stays handwriting: a lasso capture can now keep the ink itself, not only the
