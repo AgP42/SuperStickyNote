@@ -28,9 +28,11 @@ import {
   toCardPayload,
   getBubbleHidden,
   getFrameStyle,
-  getCaptureMode,
+  getMode,
   inkDir,
   setDrawing,
+  getAll,
+  remove,
   flush,
 } from './src/store';
 import {ensureFilePermissions} from './src/permissions';
@@ -156,7 +158,9 @@ DeviceEventEmitter.addListener('onNewNote', async () => {
   setOpen(note.id, true);
   try {
     await syncOpenCards();
-    await StickyNative?.beginEdit(note.id);
+    // Handwriting mode: straight to the pen. Text: straight to the keyboard.
+    if (note.kind === 'ink') await StickyNative?.beginWriting(note.id);
+    else await StickyNative?.beginEdit(note.id);
   } catch (e) {
     blog(`[new] err: ${e && e.message}`);
   }
@@ -308,11 +312,11 @@ async function captureInk() {
   }
 }
 
-// Lasso → "Add to sticky": keep the selection's handwriting and/or its OCR text
-// (Settings → Capture) in a new post-it.
+// Lasso → "Add to sticky": in Handwriting mode keep the selection's ink, in
+// Text mode recognise it (Settings → Mode), into a new post-it.
 async function handleLassoToSticky() {
   try {
-    const mode = getCaptureMode();
+    const mode = getMode();
     ToastAndroid.show(mode === 'ink' ? 'Capturing…' : 'Recognizing…', ToastAndroid.SHORT);
     // Element reads (getLassoElements/recognizeElements) + getPageSize hit shared
     // storage → gated behind FILE:READ on the preview firmware. Guard here so a
@@ -477,8 +481,18 @@ DeviceEventEmitter.addListener('onCardWriting', async () => {
   }
 });
 
-DeviceEventEmitter.addListener('onCardDrawn', ({id, count, strokes, png, w, h}) => {
-  setDrawing(id, count > 0 && strokes ? {strokes, png: png || '', w: w || 0, h: h || 0} : undefined);
+DeviceEventEmitter.addListener('onCardDrawn', ({id, count, changed, strokes, png, w, h}) => {
+  const note = getAll().find(n => n.id === id);
+  if (!note) return;
+  // A handwritten note left with nothing on it (opened from the bubble, then
+  // closed unwritten) is not worth keeping.
+  if (count === 0 && note.kind === 'ink' && !note.ink && !note.body.trim()) {
+    blog(`[ink] empty handwritten note ${id} discarded`);
+    remove(id);
+    syncOpenCards().catch(() => {});
+    return;
+  }
+  if (changed) setDrawing(id, count > 0 && strokes ? {strokes, png: png || '', w: w || 0, h: h || 0} : undefined);
 });
 
 // Tapping a card's icon opens the Manager (full list).
@@ -567,7 +581,7 @@ async function handleDocSelection() {
     // At the on-screen limit the sticky is still created — it just waits in the
     // Manager instead of stealing a card, exactly as the lasso capture does.
     const atLimit = getOpen().length >= getMaxCards();
-    const note = create(DEFAULT_ICON);
+    const note = create(DEFAULT_ICON, 'text'); // already text, whatever the Mode
     const patch = {body: text, sourceKind: 'doc'};
     if (path) patch.sourceFile = path;
     if (page != null) patch.sourcePage = page;

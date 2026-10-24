@@ -7,46 +7,46 @@ Public releases only. Each one is a `.snplg` on the
 > 2.26.40 (A5 X / A6 X)** minimum. Devices on an earlier Chauvet need **v0.9.1**. A build
 > for one firmware doesn't run on the other.
 
-## v2.2.0 — 2026-10-24
+## v3.0.0 — 2026-10-24
 
-Write on a sticky note with the pen.
+Handwriting arrives in SuperStickyNote: write on a sticky note with the pen, or keep the
+handwriting you lasso on the page.
 
-- **✎ on a floating card** turns it into a writing area: write with the pen, tap **✓**
-  to finish. The ink shows live, as fast as in a notebook, and **nothing lands on the
-  page under the card**.
-- The drawing is **saved**: it stays on the card, comes back when the card is reopened,
-  and shows in the Manager list and on the note page. Tap ✎ again to add to it.
-- The pen's **eraser end** removes whole strokes.
-- Writing also ends when the pen touches the page outside the card, when the card is
-  closed, or when the Manager opens — the pen always goes back to the notebook, with
-  its own pen.
-- **Delete drawing** on the note page removes it.
-- Not yet: putting a drawing back on the page as ink. Backups (.json) don't carry
-  drawings, like captured handwriting.
+### Two kinds of sticky notes
+- **Settings → Mode**: **Handwriting** or **Text (OCR)**. It decides what *new* sticky
+  notes are; each note keeps the kind it was born with, and both kinds live side by side
+  in the list and on screen.
+- **Handwriting mode**: the bubble ✚ opens a sticky note ready to write on with the pen,
+  and a lasso capture keeps the ink as you wrote it.
+- **Text mode**: as before — the keyboard, and a lasso capture is recognised (OCR).
+- A **PDF text selection** always makes a text note: it is already text.
 
-How it works: the card borrows the pen from the notebook through Supernote's firmware
-ink service, the same one the notebook uses when a plugin opens. The binder contract is
-ported from [sn-canvas](https://github.com/j-raghavan/sn-canvas) (MIT, © 2026
-JRaghavan). On a device without that service, ✎ says so and does nothing.
+### Writing on a sticky note
+- **✎ on a handwritten sticky note** opens a framed writing area; tap **✓** to finish.
+  The ink shows live, as fast as in a notebook, and **nothing lands on the page under
+  the card**.
+- The card writes with **the pen selected in the notebook**: same pen, size and grey.
+  Pick another pen in the notebook's toolbar before tapping ✎.
+- **Eraser** button under the writing area, and the pen's **eraser end**: both remove
+  whole strokes. **↶** undoes the last stroke or erase.
+- The writing is **saved** with the note, comes back when the card is reopened, and
+  shows in the Manager. Tap ✎ again to add to it.
+- Writing ends when you tap ✓, touch the page with the pen outside the card, close the
+  card or open the Manager. The pen always goes back to the notebook with its own pen.
+- A handwritten sticky note opened and closed without writing anything is discarded.
 
-## v2.1.0 — 2026-10-18
+### Handwriting captured from the page
+- In Handwriting mode a lasso keeps the ink itself, shown on the card at its size on the
+  page. **Insert ink** puts it back on a notebook page as real strokes.
 
-Handwriting stays handwriting: a lasso capture can now keep the ink itself, not only the
-recognised text.
+### Not yet
+- Putting ink *written in a card* back on the page; searching handwriting (use labels);
+  carrying ink in the .json backup.
 
-- **Your handwriting on the sticky note.** A lasso capture keeps what you wrote, as you
-  wrote it, at its size on the page — on the floating card, in the Manager list and on the
-  note page. Shapes come along as drawn.
-- **Settings → Capture**: **Both** (the default — the handwriting, with its recognised
-  text underneath for search and export), **Handwriting** (no recognition: instant, and
-  for drawings), or **Text (OCR)** (the v2.0 behaviour).
-- **Insert ink** puts the handwriting back on a notebook page as real strokes, which you
-  can lasso, move or convert like any other writing. **Insert text** still drops the text
-  as a text box.
-- The handwriting is read-only on the card; the text under it stays editable.
-- **Deleting** a note deletes its handwriting files.
-- **Backups** (.json) carry the text but not the handwriting files: a backup restored on
-  another device keeps the text and shows no handwriting.
+How it works: the card borrows the pen from the notebook through Supernote's firmware ink
+service, the same one the notebook uses when a plugin opens. The binder contract is
+ported from [sn-canvas](https://github.com/j-raghavan/sn-canvas) (MIT, © 2026 JRaghavan).
+On a device without that service, ✎ says so and does nothing.
 
 ## v2.0.0 — 2026-09-20
 

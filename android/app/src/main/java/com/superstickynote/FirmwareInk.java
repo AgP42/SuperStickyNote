@@ -31,15 +31,18 @@ final class FirmwareInk {
     private static final int TX_PEN = 2;
     private static final int TX_DRAW_BUFFER = 6;
     private static final int CLEAR_ALL = 255;
-    // One sentinel rect [0, 0, edge, edge, 0]: ink on everywhere.
+    // One sentinel rect [0, 0, edge, edge, 0]: ink on everywhere, or off everywhere.
     private static final int WRITABLE_ON_EDGE = 18888;
-    // The firmware's needle, black: what the card writes with.
-    private static final int[] CARD_PEN = {10, 1000, 0};
+    private static final int WRITABLE_OFF_EDGE = 19999;
 
     private final Log log;
     private IBinder binder;
     private boolean claimed;
-    /** The note's own pen (firmware codes), set back on release; null = unknown. */
+    /**
+     * The note's own pen (firmware codes): the card writes with it too, and it
+     * is set back on release. null = unknown (the card then writes with the
+     * needle, black).
+     */
     private int[] notePen;
 
     FirmwareInk(Log log) { this.log = log; }
@@ -49,18 +52,35 @@ final class FirmwareInk {
 
     boolean isClaimed() { return claimed; }
 
-    /** Take the pen for the card, ink on everywhere. Safe to repeat. */
+    /** The pen the card writes with: the note's, or the needle when unknown. */
+    int[] pen() { return notePen != null ? notePen : InkPad.DEFAULT_PEN; }
+
+    /** Take the pen for the card, writing with the note's pen, ink on everywhere. Safe to repeat. */
     boolean claim() {
         if (binder() == null) return false;
         send(TX_WRITE_APP_INFO, p -> { p.writeInt(0); p.writeInt(0); });
         send(TX_DISABLE_AREA, p -> p.writeInt(0));
-        send(TX_PEN, p -> { p.writeInt(CARD_PEN[0]); p.writeInt(CARD_PEN[1]); p.writeInt(CARD_PEN[2]); });
-        send(TX_DISABLE_AREA, p -> {
-            p.writeInt(1);
-            for (int v : new int[]{0, 0, WRITABLE_ON_EDGE, WRITABLE_ON_EDGE, 0}) p.writeInt(v);
-        });
+        sendPen(pen());
+        setWritableRaw(true);
         claimed = true;
         return true;
+    }
+
+    /** Live ink on (writing) or off (the eraser tool: nothing to paint). */
+    void setWritable(boolean on) {
+        if (claimed) setWritableRaw(on);
+    }
+
+    private void setWritableRaw(boolean on) {
+        final int edge = on ? WRITABLE_ON_EDGE : WRITABLE_OFF_EDGE;
+        send(TX_DISABLE_AREA, p -> {
+            p.writeInt(1);
+            for (int v : new int[]{0, 0, edge, edge, 0}) p.writeInt(v);
+        });
+    }
+
+    private void sendPen(int[] pen) {
+        send(TX_PEN, p -> { p.writeInt(pen[0]); p.writeInt(pen[1]); p.writeInt(pen[2]); });
     }
 
     /** Wipe the firmware's live ink (our own rendering then shows the strokes). */
@@ -77,27 +97,25 @@ final class FirmwareInk {
     void release() {
         if (!claimed) return;
         clearInk();
-        if (notePen != null) {
-            final int[] pen = notePen;
-            send(TX_PEN, p -> { p.writeInt(pen[0]); p.writeInt(pen[1]); p.writeInt(pen[2]); });
-        }
-        send(TX_DISABLE_AREA, p -> {
-            p.writeInt(1);
-            for (int v : new int[]{0, 0, WRITABLE_ON_EDGE, WRITABLE_ON_EDGE, 0}) p.writeInt(v);
-        });
+        if (notePen != null) sendPen(notePen);
+        setWritableRaw(true);
         claimed = false;
         log.line("[ink] pen released to the note (pen " + (notePen == null ? "unknown" : notePen[0] + "/" + notePen[1]) + ")");
     }
 
-    /** The note's pen as getPenInfo reports it (SDK codes), mapped like sn-canvas's FirmwarePen.ofNotePen. */
-    void setNotePen(int type, int width, int color) {
+    /**
+     * The note's pen as getPenInfo reports it (SDK codes), mapped like
+     * sn-canvas's FirmwarePen.ofNotePen. Returns the firmware pen, or null for
+     * a tool the firmware has no pen code for (an eraser, a lasso).
+     */
+    int[] setNotePen(int type, int width, int color) {
         int nib;
         switch (type) {
             case 1: case 16: nib = 16; break;   // pressure pen → ink
             case 10: nib = 10; break;           // fineliner → needle
             case 11: nib = 11; break;           // marker
             case 14: case 15: nib = 15; break;  // calligraphy (the device reports 15)
-            default: notePen = null; return;
+            default: notePen = null; return null;
         }
         int col;
         switch (color) {
@@ -107,6 +125,8 @@ final class FirmwareInk {
             default: col = 0;
         }
         notePen = new int[]{nib, width > 0 ? width : 1000, col};
+        if (claimed) sendPen(notePen); // the card was claimed before JS answered
+        return notePen;
     }
 
     private IBinder binder() {

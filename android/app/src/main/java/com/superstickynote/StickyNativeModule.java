@@ -109,7 +109,12 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         TextView penBtn;
         /** The hand-drawn layer, or null while the card has no drawing. */
         InkPad pad;
+        /** Eraser · undo, under the pad while writing. */
+        LinearLayout inkBar;
+        EraserIcon eraserBtn;
         String drawPath = "";
+        /** "text", "ink" or "mixed" (see applyKind). */
+        String kind = "";
         View resizeHandle;
         LinearLayout clipBar;
         WindowManager.LayoutParams params;
@@ -295,6 +300,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                     boolean collapsed = n.hasKey("collapsed") && n.getBoolean("collapsed");
                     String ink = n.hasKey("ink") && !n.isNull("ink") ? n.getString("ink") : "";
                     String drawing = n.hasKey("drawing") && !n.isNull("drawing") ? n.getString("drawing") : "";
+                    String kind = n.hasKey("kind") && !n.isNull("kind") ? n.getString("kind") : "text";
                     int fontSp = n.hasKey("fontSize") && !n.isNull("fontSize")
                             ? n.getInt("fontSize") : DEFAULT_FONT_SP;
                     int x = n.hasKey("x") && !n.isNull("x") ? n.getInt("x") : -1;
@@ -314,6 +320,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                         addCard(ctx, id, icon, body, labels, x, y, w, h, collapsed, fontSp);
                     }
                     applyInk(cards.get(id), ink);
+                    applyKind(cards.get(id), kind);
                     applyDrawing(cards.get(id), drawing);
                     applyFont(cards.get(id), font);
                 }
@@ -805,9 +812,11 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
     private void applyCollapse(Card c) {
         int vis = c.collapsed ? View.GONE : View.VISIBLE;
         c.dividerView.setVisibility(vis);
-        c.body.setVisibility(c == writingCard ? View.GONE : vis);
+        // A handwritten note has no text to type; nor does a card being written on.
+        c.body.setVisibility(c == writingCard || "ink".equals(c.kind) ? View.GONE : vis);
         c.resizeHandle.setVisibility(vis);
         if (c.pad != null) c.pad.setVisibility(vis);
+        if (c.inkBar != null) c.inkBar.setVisibility(c == writingCard && !c.collapsed ? View.VISIBLE : View.GONE);
         if (c.inkView != null) {
             c.inkView.setVisibility(c.collapsed || c.inkPath.isEmpty() ? View.GONE : View.VISIBLE);
         }
@@ -920,6 +929,20 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         return !c.drawPath.isEmpty() ? new File(c.drawPath) : new File(inkDir, "draw_" + c.id + ".json");
     }
 
+    /**
+     * What the card is: "text" (typed, no pen), "ink" (handwritten, no
+     * keyboard) or "mixed" (a note from before the two kinds: it shows both).
+     */
+    private void applyKind(Card c, String kind) {
+        if (c == null) return;
+        String k = kind == null || kind.isEmpty() ? "text" : kind;
+        if (k.equals(c.kind)) return;
+        c.kind = k;
+        if ("text".equals(k) && c == writingCard) finishWriting(c);
+        c.penBtn.setVisibility("text".equals(k) ? View.GONE : View.VISIBLE);
+        applyCollapse(c);
+    }
+
     /** Show (or drop) the card's saved drawing. Never touches a card being written on. */
     private void applyDrawing(Card c, String path) {
         if (c == null || c == writingCard) return;
@@ -938,16 +961,55 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
 
     private void ensurePad(Card c) {
         if (c.pad != null) return;
-        InkPad pad = new InkPad(c.view.getContext());
+        Context ctx = c.view.getContext();
+        InkPad pad = new InkPad(ctx);
         pad.setHint("Write here with the pen · ✓ to finish");
         LinearLayout panel = (LinearLayout) c.view;
         // Under the captured ink, above the text.
-        panel.addView(pad, panel.indexOfChild(c.body), new LinearLayout.LayoutParams(
+        int at = panel.indexOfChild(c.body);
+        panel.addView(pad, at, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(40)));
+
+        // Writing tools, under the pad, only while writing: eraser · undo.
+        LinearLayout bar = new LinearLayout(ctx);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
+        bar.setVisibility(View.GONE);
+        EraserIcon eraser = new EraserIcon(ctx);
+        LinearLayout.LayoutParams eLP = new LinearLayout.LayoutParams(dp(44), dp(44));
+        eLP.rightMargin = dp(12);
+        bar.addView(eraser, eLP);
+        TextView undoV = new TextView(ctx);
+        undoV.setText("↶");
+        undoV.setTextColor(Color.BLACK);
+        undoV.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        undoV.setGravity(Gravity.CENTER);
+        undoV.setMinWidth(dp(44));
+        undoV.setMinHeight(dp(44));
+        undoV.setContentDescription("Undo");
+        undoV.setAlpha(0.3f);
+        bar.addView(undoV, wrapLP());
+        LinearLayout.LayoutParams barLP = matchWidthLP();
+        barLP.topMargin = dp(4);
+        panel.addView(bar, at + 1, barLP);
+
+        eraser.setOnClickListener(v -> {
+            boolean on = !eraser.isOn();
+            eraser.setOn(on);
+            pad.setEraserTool(on);
+            // Nothing to paint while erasing: no live ink trailing the eraser.
+            firmwareInk().setWritable(!on);
+            logLine("[ink] eraser tool " + (on ? "on" : "off"));
+        });
+        undoV.setOnClickListener(v -> pad.undo());
+
         pad.setListener(new InkPad.Listener() {
             @Override public void onErased() { firmwareInk().clearInk(); }
             @Override public void onFocusGained() {
-                if (c == writingCard) firmwareInk().claim();
+                if (c == writingCard) {
+                    firmwareInk().claim();
+                    if (pad.isEraserTool()) firmwareInk().setWritable(false);
+                }
             }
             @Override public void onFocusLost() {
                 // Another window took focus (the Manager, a dialog): the firmware
@@ -957,14 +1019,20 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                     if (c == writingCard && c.view != null && !c.view.hasWindowFocus()) finishWriting(c);
                 }, 400);
             }
+            @Override public void onUndoChanged(boolean canUndo) { undoV.setAlpha(canUndo ? 1f : 0.3f); }
         });
         c.pad = pad;
+        c.inkBar = bar;
+        c.eraserBtn = eraser;
     }
 
     private void removePad(Card c) {
         if (c.pad == null) return;
         try { ((LinearLayout) c.view).removeView(c.pad); } catch (Exception ignored) {}
+        try { ((LinearLayout) c.view).removeView(c.inkBar); } catch (Exception ignored) {}
         c.pad = null;
+        c.inkBar = null;
+        c.eraserBtn = null;
         try { if (wm != null) wm.updateViewLayout(c.view, c.params); } catch (Exception ignored) {}
     }
 
@@ -993,8 +1061,10 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         ensurePad(c);
         writingCard = c;
         c.penBtn.setText("✓");
-        c.body.setVisibility(View.GONE);
-        c.pad.setWriting(true, true);
+        c.eraserBtn.setOn(false);
+        c.pad.setPen(firmwareInk().pen());
+        c.pad.setWriting(true);
+        applyCollapse(c);
         sizePad(c);
         setWindowFocusable(c, true);
         // Claim now AND on every focus gain: the firmware hands the pen to
@@ -1006,29 +1076,29 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         emit("onCardWriting", m);
     }
 
-    /** Stop writing: save the drawing, give the pen back to the note. */
+    /**
+     * Stop writing: save the drawing, give the pen back to the note. Always
+     * tells JS how many strokes are left, so an empty handwritten note can go.
+     */
     private void finishWriting(Card c) {
         if (c != writingCard) return;
         writingCard = null;
-        if (c.pad != null) c.pad.setWriting(false, false);
+        if (c.pad != null) c.pad.setWriting(false);
         firmwareInk().release();
         setWindowFocusable(c, false);
         c.penBtn.setText("✎");
-        if (!c.collapsed) c.body.setVisibility(View.VISIBLE);
-        if (c.pad == null) return;
-        boolean changed = c.pad.hasChanges();
-        File json = drawingFile(c);
         WritableMap m = Arguments.createMap();
         m.putString("id", c.id);
-        if (c.pad.isEmpty()) {
+        if (c.pad == null || c.pad.isEmpty()) {
+            boolean had = !c.drawPath.isEmpty();
+            if (had) drawingFile(c).delete();
+            c.drawPath = "";
             removePad(c);
-            if (changed || !c.drawPath.isEmpty()) {
-                json.delete();
-                c.drawPath = "";
-                m.putInt("count", 0);
-                emit("onCardDrawn", m);
-            }
-        } else if (changed) {
+            m.putInt("count", 0);
+            m.putBoolean("changed", had);
+            emit("onCardDrawn", m);
+        } else if (c.pad.hasChanges()) {
+            File json = drawingFile(c);
             boolean saved = c.pad.save(json);
             File png = new File(inkDir, "draw_" + c.id + "_" + System.currentTimeMillis() + ".png");
             int[] size = c.pad.renderPng(png);
@@ -1037,6 +1107,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
             if (saved) {
                 c.drawPath = json.getPath();
                 m.putInt("count", c.pad.strokeCount());
+                m.putBoolean("changed", true);
                 m.putString("strokes", json.getPath());
                 m.putString("png", size != null ? png.getPath() : "");
                 m.putInt("w", size != null ? size[0] : 0);
@@ -1048,17 +1119,35 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         applyCollapse(c);
     }
 
+    /** JS: open a card straight in writing (a new handwritten note from the bubble). */
+    @ReactMethod
+    public void beginWriting(String id, Promise promise) {
+        main.post(() -> {
+            Card c = cards.get(id);
+            if (c != null) startWriting(c);
+            promise.resolve(c != null);
+        });
+    }
+
     @ReactMethod
     public void setInkDir(String path, Promise promise) {
         inkDir = path == null ? "" : path;
         promise.resolve(true);
     }
 
-    /** The note's pen (getPenInfo), set back when a card gives the pen back. */
+    /**
+     * The note's pen (getPenInfo): the card writes with it, and sets it back
+     * when it gives the pen back. Called just after writing starts.
+     */
     @ReactMethod
     public void setNotePen(int type, int width, int color, Promise promise) {
-        firmwareInk().setNotePen(type, width, color);
-        promise.resolve(true);
+        main.post(() -> {
+            int[] pen = firmwareInk().setNotePen(type, width, color);
+            logLine("[ink] note pen type=" + type + " width=" + width + " color=" + color
+                    + (pen == null ? " → no pen code, writing with the needle" : " → " + pen[0] + "/" + pen[1] + "/" + pen[2]));
+            if (writingCard != null && writingCard.pad != null) writingCard.pad.setPen(firmwareInk().pen());
+            promise.resolve(pen != null);
+        });
     }
 
     // ---- Inline edit (focusable toggle → soft keyboard) -------------------

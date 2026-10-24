@@ -11,10 +11,10 @@ and it becomes a sticky note that remembers where it came from.
 
 ## What it does
 
-- **Sticky notes that float** over the NOTE and DOCUMENT apps — type, **write on them
-  with the pen**, collapse, move, resize. 8 on screen by default, up to 40 if you want them.
+- **Sticky notes that float** over the NOTE and DOCUMENT apps — **typed, or written
+  with the pen** (Settings → Mode), collapse, move, resize. 8 on screen by default, up to 40 if you want them.
 - **Capture handwriting** with the lasso: the sticky note keeps it **as you wrote it**,
-  recognised as text, or both — in a notebook *or* on a PDF annotation.
+  or recognised as text — in a notebook *or* on a PDF annotation.
 - **Capture PDF text**: select it, tap the plugin button in the selection toolbar. No
   recognition needed.
 - **Put it back on the page**: the handwriting as real ink, or the text as an editable
@@ -24,8 +24,8 @@ and it becomes a sticky note that remembers where it came from.
 
 ## Capture from the page
 
-Lasso handwriting in a notebook and it lands in a new sticky note — as handwriting, as
-recognised text, or both (Settings → Capture).
+Lasso handwriting in a notebook and it lands in a new sticky note — as handwriting or as
+recognised text, depending on Settings → Mode.
 
 ![Lassoed handwriting captured into a sticky note](docs/screenshots/lasso-capture.png)
 

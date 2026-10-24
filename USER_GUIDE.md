@@ -61,7 +61,7 @@ writing in your notebook in the gaps between sticky notes.
 | **Drag the header** | Move the sticky note |
 | **Drag the ◢ corner** | Resize (bottom-right) |
 | **Long-press the body** | Copy / Paste bar |
-| **✎ (top-right)** | Write on it with the pen; **✓** to finish (below) |
+| **✎ (top-right)** | Handwritten notes: write with the pen; **✓** to finish (below) |
 | **✕ (top-right)** | Close the sticky note (it stays saved in the list) |
 
 - **Saving is automatic** — text is saved as you type; tapping outside the sticky note also closes the keyboard.
@@ -73,18 +73,24 @@ writing in your notebook in the gaps between sticky notes.
   **No limit** on total notes.
 - **Move it with a finger, not the pen** — see *Good to know* below.
 
-### Writing on a sticky note with the pen
+### Handwritten sticky notes
 
-Tap **✎** in a floating card's header. A framed writing area opens: write with the pen,
-then tap **✓**. The ink shows as you write, and nothing is written on the page under the
-card.
+In **Handwriting** mode (Settings → Mode, §6), sticky notes are written with the pen
+instead of typed. Tap **✎** in the card's header — the bubble ✚ does it for you on a new
+note — and a framed writing area opens. Write, then tap **✓**. The ink shows as you
+write, and nothing is written on the page under the card.
 
-- The drawing is **kept**: it stays on the card and in the Manager. Tap ✎ again to add
+- The card writes with **the pen selected in the notebook**: same pen, size and grey. To
+  write with another one, pick it in the notebook's toolbar first.
+- **Erase** with the eraser button under the writing area, or turn the pen over and use
+  its eraser end. Either removes whole strokes. **↶** undoes the last stroke or erase.
+  *(The notebook's own eraser can't reach the card: its ink isn't on the page.)*
+- What you wrote is **kept**: it stays on the card and in the Manager. Tap ✎ again to add
   to it.
-- Turn the pen over: the **eraser end** removes whole strokes.
 - Writing also ends when you touch the page **with the pen** outside the card, close the
   card, or open the Manager. A finger or a resting palm doesn't end it.
 - Move the card by its header with a **finger** while writing.
+- A handwritten note you open and close without writing anything is discarded.
 
 ---
 
@@ -146,8 +152,9 @@ right now wears its icon in a black square. The list is **paged**: use
   Each one is **shown in its own typeface**, so you pick by looking, not by name.
 - **Launcher bubble** — **Shown / Hidden**. When it's hidden you still create notes with
   **＋ New StickyNote**, or by capturing from a page.
-- **Capture** — what a lasso capture keeps (§7): **Both** (default), **Handwriting**,
-  or **Text (OCR)**.
+- **Mode** — **Handwriting** or **Text (OCR)**: what *new* sticky notes are, from the
+  bubble, the Manager and the lasso (§3, §7). Notes you already have keep their kind.
+  Default **Text**.
 - **Frame on capture** — **Off / Black / Grey 1 / Grey 2**: when you capture handwriting
   with the lasso, optionally draw a thin box **on the note** around what you captured, so
   you can see at a glance what was turned into a sticky note. A single thin line you can
@@ -164,15 +171,12 @@ right now wears its icon in a black square. The list is **paged**: use
 ### Handwriting → sticky note
 
 Lasso some handwriting, then tap **Add to StickyNote** in the lasso toolbar. A **new sticky
-note** appears with what Settings → **Capture** asks for:
+note** appears, following Settings → **Mode**:
 
-- **Both** (default) — your handwriting, as you wrote it, with the recognised text
-  underneath. The text is what search, the title and the .txt export use.
-- **Handwriting** — the ink only, no recognition. Instant; best for drawings and sketches.
-- **Text (OCR)** — the recognised text only. Recognition takes a few seconds — a
+- **Handwriting** — the ink itself, as you wrote it, at its size on the page (shrunk
+  only when it doesn't fit the card). Instant. You can write more under it with ✎.
+- **Text (OCR)** — the recognised text, editable. Recognition takes a few seconds — a
   "Recognizing…" message shows while it works.
-
-The handwriting keeps its size on the page, shrunk only when it doesn't fit the card.
 
 This works in a **notebook** *and* on **handwritten annotations in a PDF or EPUB**.
 
@@ -181,7 +185,7 @@ This works in a **notebook** *and* on **handwritten annotations in a PDF or EPUB
 ![A handwritten PDF annotation captured as a sticky note](docs/screenshots/pdf-lasso-sticky.png)
 
 - The **lasso clears itself** once the text is captured. Your handwriting is untouched.
-- Shapes are kept as drawn with the handwriting. In **Text (OCR)** mode a **shapes-only**
+- Shapes are kept as drawn in Handwriting mode. In **Text (OCR)** mode a **shapes-only**
   selection still makes a sticky note, describing what it found ("2 × Circle").
 - Turn on **Frame on capture** (§6) to box what you captured — on a notebook page or a
   document, since the frame is a drawn shape.

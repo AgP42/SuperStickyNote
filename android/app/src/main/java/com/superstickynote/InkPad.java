@@ -18,60 +18,89 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * A sticky note's hand-drawn layer. Strokes are kept as vectors (x, y,
- * pressure per sample, in pad pixels from the top-left), saved as JSON and
- * rendered here — on the card and, through {@link #renderPng}, for the Manager.
+ * A handwritten sticky note's ink. Strokes are vectors (x, y, pressure per
+ * sample, in pad pixels from the top-left), each with the pen it was written
+ * with — the note's own pen, in the firmware's codes (type, width, colour).
+ * Saved as JSON, rendered here: on the card and, through {@link #renderPng},
+ * for the Manager.
  *
  * While writing, the firmware paints the live stroke ({@link FirmwareInk}) and
  * the pad does not redraw under it: a redraw would repaint the panel over the
  * ink of the next stroke, still being written. It redraws once the pen rests
- * (SETTLE_MS). Without firmware ink it draws the live stroke itself.
+ * (SETTLE_MS), and its own rendering takes over.
  *
- * Only the pen writes; the pen's eraser end removes whole strokes; fingers
- * pass through (the card stays draggable by its header).
+ * Only the pen writes. The eraser tool, or the pen's eraser end, removes whole
+ * strokes. Fingers pass through (the card stays draggable by its header).
  */
 final class InkPad extends View {
     interface Listener {
-        /** The pen erased: the firmware's live ink of the erased strokes must go. */
+        /** Something was erased or undone: the firmware's live ink must go. */
         void onErased();
         /** The card's window gained focus while writing: claim the pen again. */
         void onFocusGained();
         /** The card's window lost focus while writing. */
         void onFocusLost();
+        /** The undo stack changed (enable/disable the button). */
+        void onUndoChanged(boolean canUndo);
     }
 
+    // Firmware pen codes (see FirmwareInk).
+    static final int PEN_NEEDLE = 10;
+    static final int PEN_MARKER = 11;
+    static final int PEN_CALLIGRAPHY = 15;
+    static final int PEN_INK = 16;
+    static final int[] DEFAULT_PEN = {PEN_NEEDLE, 1000, 0};
+
     private static final long SETTLE_MS = 2000;
-    private static final float STROKE_PX = 3.5f;
+    /**
+     * Firmware width units → pad px. A first guess, to calibrate against the
+     * live firmware ink: tune here if the settled stroke looks thinner or bolder.
+     */
+    private static final float PX_PER_WIDTH_UNIT = 4.5f / 1000f;
     private static final float ERASE_RADIUS_PX = 18f;
 
-    /** Each stroke: x0, y0, p0, x1, y1, p1, … */
-    private final List<float[]> strokes = new ArrayList<>();
-    private final List<Path> paths = new ArrayList<>();
+    private static final class Stroke {
+        final float[] pts; // x, y, p, …
+        final int[] pen;   // type, width, colour (firmware codes)
+        final Path path;
+        Stroke(float[] pts, int[] pen) { this.pts = pts; this.pen = pen; this.path = pathOf(pts); }
+    }
+
+    /** One undoable step: a stroke added, or strokes erased (with their indices). */
+    private static final class Op {
+        Stroke added;
+        final List<Integer> erasedAt = new ArrayList<>();
+        final List<Stroke> erased = new ArrayList<>();
+    }
+
+    private final List<Stroke> strokes = new ArrayList<>();
+    private final List<Op> undo = new ArrayList<>();
     private float[] cur;
     private int curLen;
     private Path curPath;
+    private Op eraseOp;
     private boolean erasing;
+    private boolean eraserTool;
     private boolean writing;
-    private boolean firmwareLive;
     private boolean dirty;
+    private int[] pen = DEFAULT_PEN;
     private String hintText = "";
     private Listener listener;
 
-    private final Paint ink = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint frame = new Paint();
     private final Paint hint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Runnable settle = this::invalidate;
 
     InkPad(Context ctx) {
         super(ctx);
-        ink.setColor(Color.BLACK);
-        ink.setStyle(Paint.Style.STROKE);
-        ink.setStrokeWidth(STROKE_PX);
-        ink.setStrokeCap(Paint.Cap.ROUND);
-        ink.setStrokeJoin(Paint.Join.ROUND);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeJoin(Paint.Join.ROUND);
         frame.setColor(Color.BLACK);
         frame.setStyle(Paint.Style.STROKE);
         frame.setStrokeWidth(2f);
+        frame.setPathEffect(new android.graphics.DashPathEffect(new float[]{10f, 8f}, 0f));
         hint.setColor(Color.GRAY);
         hint.setTextSize(28f);
         setBackgroundColor(Color.WHITE);
@@ -81,17 +110,23 @@ final class InkPad extends View {
 
     void setHint(String s) { hintText = s; }
 
-    /** Writing on (pen claimed or not) or off (the drawing just shows). */
-    void setWriting(boolean on, boolean firmwareLive) {
+    /** The pen new strokes are written with (firmware codes). */
+    void setPen(int[] p) { pen = p != null ? p : DEFAULT_PEN; }
+
+    void setEraserTool(boolean on) { eraserTool = on; }
+
+    boolean isEraserTool() { return eraserTool; }
+
+    /** Writing on (the firmware inks live) or off (the drawing just shows). */
+    void setWriting(boolean on) {
         writing = on;
-        this.firmwareLive = on && firmwareLive;
+        eraserTool = false;
         removeCallbacks(settle);
         cur = null;
         curPath = null;
+        if (!on) { undo.clear(); notifyUndo(); }
         invalidate();
     }
-
-    boolean isWriting() { return writing; }
 
     boolean isEmpty() { return strokes.isEmpty(); }
 
@@ -103,9 +138,40 @@ final class InkPad extends View {
     /** Lowest point drawn, in px (0 when empty): the card sizes the pad on it. */
     int contentBottom() {
         float b = 0;
-        for (float[] s : strokes) for (int i = 1; i < s.length; i += 3) b = Math.max(b, s[i]);
-        return (int) Math.ceil(b + STROKE_PX);
+        for (Stroke s : strokes) {
+            for (int i = 1; i < s.pts.length; i += 3) b = Math.max(b, s.pts[i] + widthOf(s.pen));
+        }
+        return (int) Math.ceil(b);
     }
+
+    // ---- Undo ---------------------------------------------------------------
+
+    boolean canUndo() { return !undo.isEmpty(); }
+
+    void undo() {
+        if (undo.isEmpty()) return;
+        Op op = undo.remove(undo.size() - 1);
+        if (op.added != null) strokes.remove(op.added);
+        // Put erased strokes back where they were, lowest index first.
+        for (int k = op.erased.size() - 1; k >= 0; k--) {
+            int at = Math.min(op.erasedAt.get(k), strokes.size());
+            strokes.add(at, op.erased.get(k));
+        }
+        dirty = true;
+        notifyUndo();
+        if (listener != null) listener.onErased(); // the live ink no longer matches
+        invalidate();
+    }
+
+    private void push(Op op) {
+        undo.add(op);
+        if (undo.size() > 100) undo.remove(0);
+        notifyUndo();
+    }
+
+    private void notifyUndo() { if (listener != null) listener.onUndoChanged(canUndo()); }
+
+    // ---- Input --------------------------------------------------------------
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
@@ -119,13 +185,14 @@ final class InkPad extends View {
     public boolean onTouchEvent(MotionEvent ev) {
         if (!writing) return false;
         int tool = ev.getToolType(0);
-        boolean pen = tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER;
-        if (!pen) return false;
+        boolean penTool = tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER;
+        if (!penTool) return false;
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 removeCallbacks(settle);
-                erasing = tool == MotionEvent.TOOL_TYPE_ERASER;
+                erasing = eraserTool || tool == MotionEvent.TOOL_TYPE_ERASER;
                 if (erasing) {
+                    eraseOp = new Op();
                     eraseAt(ev.getX(), ev.getY());
                 } else {
                     cur = new float[96];
@@ -140,25 +207,20 @@ final class InkPad extends View {
                     sample(ev.getHistoricalX(h), ev.getHistoricalY(h), ev.getHistoricalPressure(h));
                 }
                 sample(ev.getX(), ev.getY(), ev.getPressure());
-                if (!firmwareLive && !erasing) invalidate();
                 return true;
             case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
                 if (erasing) {
                     erasing = false;
+                    if (eraseOp != null && !eraseOp.erased.isEmpty()) push(eraseOp);
+                    eraseOp = null;
                     if (listener != null) listener.onErased();
                     invalidate();
                     return true;
                 }
-                sample(ev.getX(), ev.getY(), ev.getPressure());
+                if (ev.getActionMasked() == MotionEvent.ACTION_UP) sample(ev.getX(), ev.getY(), ev.getPressure());
                 commit();
-                if (firmwareLive) postDelayed(settle, SETTLE_MS);
-                else invalidate();
-                return true;
-            case MotionEvent.ACTION_CANCEL:
-                // The system took the stream away: keep what was drawn.
-                if (!erasing) commit();
-                erasing = false;
-                invalidate();
+                postDelayed(settle, SETTLE_MS);
                 return true;
             default:
                 return true;
@@ -185,11 +247,13 @@ final class InkPad extends View {
 
     private void commit() {
         if (cur == null) return;
-        if (curLen <= 6) curPath.lineTo(cur[0] + 0.1f, cur[1]); // a dot still shows
-        float[] s = new float[curLen];
-        System.arraycopy(cur, 0, s, 0, curLen);
+        float[] pts = new float[curLen];
+        System.arraycopy(cur, 0, pts, 0, curLen);
+        Stroke s = new Stroke(pts, pen);
         strokes.add(s);
-        paths.add(curPath);
+        Op op = new Op();
+        op.added = s;
+        push(op);
         cur = null;
         curPath = null;
         dirty = true;
@@ -198,18 +262,20 @@ final class InkPad extends View {
     private void eraseAt(float x, float y) {
         float r2 = ERASE_RADIUS_PX * ERASE_RADIUS_PX;
         for (int k = strokes.size() - 1; k >= 0; k--) {
-            float[] s = strokes.get(k);
+            float[] s = strokes.get(k).pts;
             for (int i = 0; i + 1 < s.length; i += 3) {
                 float dx = s[i] - x, dy = s[i + 1] - y;
                 if (dx * dx + dy * dy <= r2) {
-                    strokes.remove(k);
-                    paths.remove(k);
+                    Stroke gone = strokes.remove(k);
+                    if (eraseOp != null) { eraseOp.erasedAt.add(k); eraseOp.erased.add(gone); }
                     dirty = true;
                     break;
                 }
             }
         }
     }
+
+    // ---- Rendering ----------------------------------------------------------
 
     @Override
     protected void onDraw(Canvas canvas) {
@@ -220,47 +286,101 @@ final class InkPad extends View {
                 canvas.drawText(hintText, 16, 40, hint);
             }
         }
-        for (Path p : paths) canvas.drawPath(p, ink);
-        if (curPath != null && !firmwareLive) canvas.drawPath(curPath, ink);
+        for (Stroke s : strokes) drawStroke(canvas, s, paint);
+    }
+
+    private static float widthOf(int[] pen) {
+        float w = Math.max(1.5f, pen[1] * PX_PER_WIDTH_UNIT);
+        return pen[0] == PEN_MARKER ? w * 2.5f : w;
+    }
+
+    private static int colorOf(int code) {
+        switch (code) {
+            case -101: case 0x9D: return 0xFF9D9D9D;
+            case -102: case 0xC9: return 0xFFC9C9C9;
+            case 254: return 0xFFFEFEFE; // = 0xFE, the SDK and firmware agree
+            default: return Color.BLACK;
+        }
+    }
+
+    /**
+     * One stroke the way its pen draws it: the pressure pen follows pressure,
+     * the calligraphy pen the stroke's direction (a 45° nib), the marker is wide
+     * and translucent, the needle constant.
+     */
+    private static void drawStroke(Canvas c, Stroke s, Paint p) {
+        float w = widthOf(s.pen);
+        p.setColor(colorOf(s.pen[2]));
+        p.setAlpha(s.pen[0] == PEN_MARKER ? 0x90 : 0xFF);
+        float[] pts = s.pts;
+        boolean variable = s.pen[0] == PEN_INK || s.pen[0] == PEN_CALLIGRAPHY;
+        if (!variable || pts.length < 6) {
+            p.setStrokeWidth(w);
+            c.drawPath(s.path, p);
+            return;
+        }
+        for (int i = 3; i + 2 < pts.length; i += 3) {
+            float x0 = pts[i - 3], y0 = pts[i - 2], x1 = pts[i], y1 = pts[i + 1];
+            float sw;
+            if (s.pen[0] == PEN_INK) {
+                float pr = Math.max(0f, Math.min(1f, pts[i + 2]));
+                sw = w * (0.35f + 0.95f * pr);
+            } else {
+                double a = Math.atan2(y1 - y0, x1 - x0) - Math.PI / 4;
+                sw = w * (0.3f + 1.1f * (float) Math.abs(Math.sin(a)));
+            }
+            p.setStrokeWidth(Math.max(1f, sw));
+            c.drawLine(x0, y0, x1, y1, p);
+        }
     }
 
     // ---- Files --------------------------------------------------------------
 
-    /** Load strokes saved by {@link #save}; a missing or broken file is an empty drawing. */
+    /** Load strokes saved by {@link #save} (v2), or the v1 format (needle, black). */
     void load(File f) {
         strokes.clear();
-        paths.clear();
+        undo.clear();
         dirty = false;
         if (f == null || !f.isFile()) { invalidate(); return; }
         try {
             String json = new String(java.nio.file.Files.readAllBytes(f.toPath()), "UTF-8");
             JSONArray arr = new JSONObject(json).getJSONArray("strokes");
             for (int k = 0; k < arr.length(); k++) {
-                JSONArray a = arr.getJSONArray(k);
+                Object o = arr.get(k);
+                JSONArray a;
+                int[] pn = DEFAULT_PEN;
+                if (o instanceof JSONObject) {
+                    JSONObject so = (JSONObject) o;
+                    a = so.getJSONArray("pts");
+                    pn = new int[]{so.optInt("pen", PEN_NEEDLE), so.optInt("w", 1000), so.optInt("c", 0)};
+                } else {
+                    a = (JSONArray) o;
+                }
                 float[] s = new float[a.length() - a.length() % 3];
                 for (int i = 0; i < s.length; i++) s[i] = (float) a.getDouble(i);
                 if (s.length < 3) continue;
-                strokes.add(s);
-                paths.add(pathOf(s));
+                strokes.add(new Stroke(s, pn));
             }
         } catch (Exception ignored) {}
         invalidate();
     }
 
-    /** Write the strokes as {"v":1,"strokes":[[x,y,p,…],…]} (atomic rename). */
+    /** Write {"v":2,"strokes":[{"pen":10,"w":1000,"c":0,"pts":[x,y,p,…]},…]} (atomic rename). */
     boolean save(File f) {
         try {
-            StringBuilder sb = new StringBuilder("{\"v\":1,\"strokes\":[");
+            StringBuilder sb = new StringBuilder("{\"v\":2,\"strokes\":[");
             for (int k = 0; k < strokes.size(); k++) {
+                Stroke st = strokes.get(k);
                 if (k > 0) sb.append(',');
-                sb.append('[');
-                float[] s = strokes.get(k);
+                sb.append("{\"pen\":").append(st.pen[0]).append(",\"w\":").append(st.pen[1])
+                        .append(",\"c\":").append(st.pen[2]).append(",\"pts\":[");
+                float[] s = st.pts;
                 for (int i = 0; i < s.length; i++) {
                     if (i > 0) sb.append(',');
                     // 0.1 px and 0.01 pressure are plenty.
                     sb.append(i % 3 == 2 ? Math.round(s[i] * 100) / 100f : Math.round(s[i] * 10) / 10f);
                 }
-                sb.append(']');
+                sb.append("]}");
             }
             sb.append("]}");
             File parent = f.getParentFile();
@@ -279,10 +399,12 @@ final class InkPad extends View {
     int[] renderPng(File f) {
         if (strokes.isEmpty()) return null;
         RectF b = new RectF(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE);
-        for (float[] s : strokes) {
-            for (int i = 0; i + 1 < s.length; i += 3) b.union(s[i], s[i + 1]);
+        float maxW = 0;
+        for (Stroke s : strokes) {
+            maxW = Math.max(maxW, widthOf(s.pen) * 1.4f);
+            for (int i = 0; i + 1 < s.pts.length; i += 3) b.union(s.pts[i], s.pts[i + 1]);
         }
-        float m = STROKE_PX + 6;
+        float m = maxW + 6;
         int w = Math.max(1, (int) Math.ceil(b.width() + 2 * m));
         int h = Math.max(1, (int) Math.ceil(b.height() + 2 * m));
         Bitmap bmp = null;
@@ -291,7 +413,8 @@ final class InkPad extends View {
             Canvas c = new Canvas(bmp);
             c.drawColor(Color.WHITE);
             c.translate(m - b.left, m - b.top);
-            for (Path p : paths) c.drawPath(p, ink);
+            Paint p = new Paint(paint);
+            for (Stroke s : strokes) drawStroke(c, s, p);
             File parent = f.getParentFile();
             if (parent != null && !parent.exists()) parent.mkdirs();
             try (java.io.FileOutputStream out = new java.io.FileOutputStream(f)) {
@@ -308,7 +431,7 @@ final class InkPad extends View {
     private static Path pathOf(float[] s) {
         Path p = new Path();
         p.moveTo(s[0], s[1]);
-        if (s.length == 3) p.lineTo(s[0] + 0.1f, s[1]); // a dot
+        if (s.length <= 6) p.lineTo(s[0] + 0.1f, s[1]); // a dot still shows
         for (int i = 3; i + 1 < s.length; i += 3) p.lineTo(s[i], s[i + 1]);
         return p;
     }

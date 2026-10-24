@@ -48,9 +48,9 @@ import {
   setBubbleHidden,
   getFrameStyle,
   setFrameStyle,
-  getCaptureMode,
-  setCaptureMode,
-  CaptureMode,
+  getMode,
+  setMode,
+  NoteMode,
   getMaxCards,
   setMaxCards,
   SAFE_MAX_CARDS,
@@ -555,7 +555,9 @@ const NoteCard = ({
         <View style={styles.cardActions}>
           <CardBtn label={note.open ? 'Hide' : 'Show on screen'} onPress={toggleOpen} />
           <CardBtn label="Edit" onPress={onOpen} />
-          <CardBtn label="Insert in note" onPress={() => toNote(note)} />
+          {(note.kind !== 'ink' || !!note.ink) && (
+            <CardBtn label="Insert in note" onPress={() => toNote(note)} />
+          )}
           {!!note.sourceFile && (
             <CardBtn label="Go to source" onPress={() => goToSource(note)} />
           )}
@@ -780,8 +782,8 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
           </>
         )}
 
-        <Text style={styles.fieldLabel}>Text</Text>
-        <TextInput
+        {note.kind !== 'ink' && <Text style={styles.fieldLabel}>Text</Text>}
+        {note.kind !== 'ink' && <TextInput
           style={[
             styles.editor,
             // The handwriting borrows its height from the editor, so the action
@@ -802,7 +804,7 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
             update(note.id, {body: txt}, {quiet: true});
             syncCardsSoon();
           }}
-        />
+        />}
 
         <Text style={styles.fieldLabel}>Labels</Text>
         <View style={styles.chipWrap}>
@@ -846,7 +848,7 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
         <View style={styles.grow} />
         <View style={styles.actionBar}>
           <BarBtn label="Done" strong onPress={done} />
-          <BarBtn label="Copy" onPress={copy} />
+          {note.kind !== 'ink' && <BarBtn label="Copy" onPress={copy} />}
           {note.ink ? (
             <>
               <BarBtn label="Insert ink" onPress={() => toNote(note, 'ink')} />
@@ -854,10 +856,10 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
                 <BarBtn label="Insert text" onPress={() => toNote(note, 'text')} />
               )}
             </>
-          ) : (
+          ) : note.kind !== 'ink' ? (
             <BarBtn label="Insert in note" onPress={() => toNote(note)} />
-          )}
-          <BarBtn label="Export" onPress={() => exportNote(note)} />
+          ) : null}
+          {note.kind !== 'ink' && <BarBtn label="Export" onPress={() => exportNote(note)} />}
           <View style={styles.grow} />
           <BarBtn
             label="Delete"
@@ -950,8 +952,7 @@ const SettingRow = ({
   </>
 );
 
-const CAPTURE_OPTS: {key: CaptureMode; label: string}[] = [
-  {key: 'both', label: 'Both'},
+const MODE_OPTS: {key: NoteMode; label: string}[] = [
   {key: 'ink', label: 'Handwriting'},
   {key: 'text', label: 'Text (OCR)'},
 ];
@@ -1057,7 +1058,7 @@ const SettingsScreen = ({
   const font = getFont();
   const hidden = getBubbleHidden();
   const frame = getFrameStyle();
-  const capture = getCaptureMode();
+  const noteMode = getMode();
 
   const exportTxt = async () => {
     try {
@@ -1163,14 +1164,16 @@ const SettingsScreen = ({
           />
         </SettingRow>
 
-        <SettingRow label="Capture" hint="What a lasso keeps in the new sticky note">
-          {CAPTURE_OPTS.map(o => (
+        <SettingRow
+          label="Mode"
+          hint="New sticky notes and lasso captures: written with the pen, or typed and recognised">
+          {MODE_OPTS.map(o => (
             <Opt
               key={o.key}
               label={o.label}
-              on={capture === o.key}
+              on={noteMode === o.key}
               onPress={() => {
-                setCaptureMode(o.key);
+                setMode(o.key);
                 bump();
               }}
             />

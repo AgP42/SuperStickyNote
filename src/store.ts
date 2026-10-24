@@ -54,6 +54,9 @@ export interface Note {
   // Which app the capture came from: a NOTE lasso, or a DOC/PDF text selection.
   // Absent on notes made before 1.3 and on manually-created ones.
   sourceKind?: 'note' | 'doc';
+  // Typed text or handwriting, set at creation by the Mode setting. Absent on
+  // notes made before 3.0: those show whatever they hold (see cardKind).
+  kind?: NoteMode;
   // The lassoed handwriting itself, kept as native ink: `sticker` goes back on a
   // page with insertSticker, `png` is its picture on the card and in the Manager.
   // Both live in the private data dir. Absent on typed and text-only captures.
@@ -77,9 +80,14 @@ export interface Ink {
   h: number;
 }
 
-/** What a lasso capture keeps: the handwriting, its recognized text, or both. */
-export type CaptureMode = 'both' | 'ink' | 'text';
-export const CAPTURE_MODES: CaptureMode[] = ['both', 'ink', 'text'];
+/**
+ * Settings → Mode: what new sticky notes are. Handwriting ('ink'): the bubble
+ * opens a card to write on with the pen, a lasso keeps the ink. Text: the
+ * keyboard, and a lasso is recognised (OCR). A PDF text selection is text
+ * either way.
+ */
+export type NoteMode = 'ink' | 'text';
+export const NOTE_MODES: NoteMode[] = ['ink', 'text'];
 
 let cache: Note[] = [];
 let fontKey: FontKey = 'M';
@@ -89,7 +97,7 @@ let bubbleHidden = false; // hide the ✚ launcher bubble
 export type FrameStyle = 'off' | 'black' | 'grey1' | 'grey2';
 export const FRAME_STYLES: FrameStyle[] = ['off', 'black', 'grey1', 'grey2'];
 let frameStyle: FrameStyle = 'off';
-let captureMode: CaptureMode = 'both';
+let mode: NoteMode = 'text';
 /** How many sticky notes the user allows on screen at once (1…MAX_CARDS). */
 let maxCards = 8;
 export const DEFAULT_MAX_CARDS = 8;
@@ -202,7 +210,8 @@ export async function initStore(): Promise<void> {
     } else if (s && (s.frameOnCapture === true || typeof s.frameStyle === 'string')) {
       frameStyle = 'black'; // migrate the pre-1.0 boolean / earlier solid|dashed|fill
     }
-    if (s && CAPTURE_MODES.includes(s.captureMode)) captureMode = s.captureMode;
+    if (s && NOTE_MODES.includes(s.mode)) mode = s.mode;
+    else if (s && s.captureMode === 'ink') mode = 'ink'; // the 2.1 capture setting
   } catch {}
   loaded = true;
 }
@@ -212,7 +221,7 @@ export async function initStore(): Promise<void> {
 function saveSettings(): void {
   StickyNative?.writeFile(
     settingsPath,
-    JSON.stringify({fontKey, font: fontSel, bubbleHidden, frameStyle, maxCards, captureMode}),
+    JSON.stringify({fontKey, font: fontSel, bubbleHidden, frameStyle, maxCards, mode}),
   ).catch(() => {});
 }
 
@@ -246,16 +255,22 @@ export function setFrameStyle(s: FrameStyle): void {
   notify({quiet: true});
 }
 
-// ---- What a lasso capture keeps -------------------------------------------
+// ---- Mode: what new sticky notes are --------------------------------------
 
-export function getCaptureMode(): CaptureMode {
-  return captureMode;
+export function getMode(): NoteMode {
+  return mode;
 }
 
-export function setCaptureMode(m: CaptureMode): void {
-  captureMode = m;
+export function setMode(m: NoteMode): void {
+  mode = m;
   saveSettings();
   notify({quiet: true});
+}
+
+/** How a card shows a note: its kind, or 'mixed' for a pre-3.0 note holding ink. */
+export function cardKind(n: Note): NoteMode | 'mixed' {
+  if (n.kind) return n.kind;
+  return n.ink || n.drawing ? 'mixed' : 'text';
 }
 
 /** Private folder for captured ink (.sticker + .png), created on demand. */
@@ -360,11 +375,13 @@ export function getOpen(): Note[] {
   return cache.filter(n => n.open);
 }
 
-export function create(icon: string): Note {
+/** A new note, of the current Mode unless `kind` says otherwise (a PDF text selection). */
+export function create(icon: string, kind: NoteMode = mode): Note {
   const now = Date.now();
   const note: Note = {
     id: `n_${now.toString(36)}_${(seq++).toString(36)}`,
     icon,
+    kind,
     body: '',
     open: false,
     x: -1,
@@ -489,6 +506,7 @@ export function toCardPayload(n: Note): CardPayload {
     font: fontSel,
     ink: n.ink?.png || '',
     drawing: n.drawing?.strokes || '',
+    kind: cardKind(n),
   };
 }
 
