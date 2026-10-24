@@ -99,7 +99,7 @@ right now wears its icon in a black square. The list is **paged**: use
 |---|---|
 | **Show on screen / Hide** | Float this sticky note on the page, or take it off |
 | **Edit** | Open the note page (§5) — *shortcut: press and hold the card* |
-| **Insert in note** | Drop this note's text onto the notebook page underneath (§7) |
+| **Insert in note** | Drop this note onto the notebook page underneath: its handwriting if it has some, otherwise its text (§8) |
 | **Go to source** | Jump back to the page this note was captured from |
 | **Delete** | Remove the note |
 
@@ -109,13 +109,16 @@ right now wears its icon in a black square. The list is **paged**: use
 
 ![The note page](docs/screenshots/note-screen.png)
 
+- **Handwriting** — only on notes captured with the ink kept (§7): what you wrote, as
+  you wrote it. Read-only.
 - **Text** — edit the whole note. The same note can be open in its floating card at the
   same time; both stay in step.
 - **Icon** — tap the icon beside the title to change it (symbols and digits 0–9).
 - **Labels** — type one and tap **Add**, or tap a suggestion. Tap a label to remove it.
 - **↪ source line** — only on captured notes: jumps back to the notebook or document page
   it came from, opening the file if it isn't already open.
-- **Done · Copy · Insert in note · Export · Delete** along the bottom.
+- **Done · Copy · Insert in note · Export · Delete** along the bottom. A note with
+  handwriting has **Insert ink** and **Insert text** instead of Insert in note.
 
 ---
 
@@ -128,6 +131,8 @@ right now wears its icon in a black square. The list is **paged**: use
   Each one is **shown in its own typeface**, so you pick by looking, not by name.
 - **Launcher bubble** — **Shown / Hidden**. When it's hidden you still create notes with
   **＋ New StickyNote**, or by capturing from a page.
+- **Capture** — what a lasso capture keeps (§7): **Both** (default), **Handwriting**,
+  or **Text (OCR)**.
 - **Frame on capture** — **Off / Black / Grey 1 / Grey 2**: when you capture handwriting
   with the lasso, optionally draw a thin box **on the note** around what you captured, so
   you can see at a glance what was turned into a sticky note. A single thin line you can
@@ -141,11 +146,18 @@ right now wears its icon in a black square. The list is **paged**: use
 
 ## 7. Capturing from a page
 
-### Handwriting → sticky note (OCR)
+### Handwriting → sticky note
 
-Lasso some handwriting, then tap **Add to StickyNote** in the lasso toolbar. The selection
-is recognised and dropped into a **new sticky note**. Recognition takes a few seconds — a
-"Recognizing…" message shows while it works.
+Lasso some handwriting, then tap **Add to StickyNote** in the lasso toolbar. A **new sticky
+note** appears with what Settings → **Capture** asks for:
+
+- **Both** (default) — your handwriting, as you wrote it, with the recognised text
+  underneath. The text is what search, the title and the .txt export use.
+- **Handwriting** — the ink only, no recognition. Instant; best for drawings and sketches.
+- **Text (OCR)** — the recognised text only. Recognition takes a few seconds — a
+  "Recognizing…" message shows while it works.
+
+The handwriting keeps its size on the page, shrunk only when it doesn't fit the card.
 
 This works in a **notebook** *and* on **handwritten annotations in a PDF or EPUB**.
 
@@ -154,8 +166,8 @@ This works in a **notebook** *and* on **handwritten annotations in a PDF or EPUB
 ![A handwritten PDF annotation captured as a sticky note](docs/screenshots/pdf-lasso-sticky.png)
 
 - The **lasso clears itself** once the text is captured. Your handwriting is untouched.
-- A **shapes-only** selection still makes a sticky note, describing what it found
-  ("2 × Circle").
+- Shapes are kept as drawn with the handwriting. In **Text (OCR)** mode a **shapes-only**
+  selection still makes a sticky note, describing what it found ("2 × Circle").
 - Turn on **Frame on capture** (§6) to box what you captured — on a notebook page or a
   document, since the frame is a drawn shape.
 
@@ -180,14 +192,19 @@ Every captured note keeps a **Go to source** backlink to its file and page.
 
 ## 8. Getting text back out
 
-- **Insert in note** — puts the sticky note's text on the **notebook page underneath**, as
-  an editable text box, using the **Font** and **Text size** from Settings. The Manager
-  closes so you land on the result. *(Notebooks only: a PDF page has no text boxes.)*
+- **Insert ink** — puts the captured handwriting back on the **notebook page
+  underneath** as real strokes: lasso it, move it, convert it like anything you wrote.
+- **Insert text** (**Insert in note** on a typed note) — puts the sticky note's text on
+  the **notebook page underneath**, as an editable text box, using the **Font** and **Text
+  size** from Settings.
+- Either way the Manager closes so you land on the result. *(Notebooks only.)*
 - **Copy** — on the note page, copies the text to the clipboard.
 - **Export** — saves that note as a `.txt`.
 - **Backup / restore all** (Settings → Backup):
   - **Export all (.txt)** — one text file per note.
   - **Export .json** — a single `SuperStickyNote-notes.json` snapshot of everything.
+    The handwriting stays in private storage: restored on another device, a note keeps
+    its text but shows no handwriting.
   - **Import .json** — reads that backup and **adds** any notes you don't already have.
     It **never overwrites** existing notes, so it's safe.
 
@@ -205,13 +222,13 @@ cloud sync can't corrupt them. Backups and exports go to the visible
 
 ## 10. Good to know / limits
 
-- **Text only inside a sticky note** — handwriting *in* a card isn't supported yet. You can
-  capture handwriting *from the page* (§7).
+- **No writing with the pen inside a sticky note** — the keyboard types in a card; for
+  handwriting, write on the page and capture it (§7). Captured handwriting is read-only.
 - **Moving a sticky note with the pen also draws on the note underneath** — the Supernote
   pen has a hardware path into the notebook that a plugin overlay can't intercept. Two ways
   around it: drag with your **finger**, or first select the **eraser** or **lasso** tool —
   then you can drag and resize with the pen without leaving a stroke.
-- **Insert in note is notebook-only.** A PDF page can't hold a text box. Capturing *from*
+- **Insert in note is notebook-only.** A PDF page can't take a text box or pasted ink. Capturing *from*
   a PDF works fine, and so does the capture frame — that one is a drawn shape, which a
   document accepts.
 - **Pasting from other apps is limited by Android.** Since Android 10 an app may only read

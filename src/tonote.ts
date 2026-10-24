@@ -1,6 +1,6 @@
 /**
- * Put a sticky back ON the page: its text goes in as an editable text box on
- * whatever note page is currently displayed under the Manager.
+ * Put a sticky back ON the page: its text goes in as an editable text box, its
+ * handwriting as native ink, on whatever note page is displayed under the Manager.
  *
  * This is the round trip SuperStickyNote never had — capture was one-way. It is
  * NOT a clipboard paste: since Android 10 an app may only read the system
@@ -21,7 +21,7 @@
  */
 import {PluginCommAPI, PluginFileAPI, PluginNoteAPI} from 'sn-plugin-lib';
 
-import {blog} from './native';
+import {StickyNative, blog} from './native';
 import {fontSp, getFont, Note} from './store';
 
 /** Unwrap the SDK's APIResponse shape. */
@@ -62,20 +62,56 @@ export interface InsertResult {
   why?: string;
 }
 
-export async function insertIntoNote(note: Note): Promise<InsertResult> {
-  const text = (note.body || '').trim();
-  if (!text) return {ok: false, why: 'This sticky note is empty'};
-
+/** The open file, when it is a note — the only place a text box or a sticker can go. */
+async function currentNote(): Promise<{path?: string; why?: string}> {
   let path: string | undefined;
   try {
     path = un<string>(await PluginCommAPI.getCurrentFilePath());
   } catch (e) {
     blog(`[tonote] getCurrentFilePath failed: ${(e as Error)?.message}`);
   }
-  if (!path) return {ok: false, why: 'Open a note first'};
-  if (!/\.note$/i.test(path)) {
-    return {ok: false, why: 'Only a note page can take a text box'};
+  if (!path) return {why: 'Open a note first'};
+  if (!/\.note$/i.test(path)) return {why: 'Only a note page can take this'};
+  return {path};
+}
+
+/**
+ * Put the captured handwriting back as native ink (insertSticker), on the
+ * displayed page: real strokes again, which can be lassoed, moved or converted
+ * like any other writing. The firmware chooses where it lands.
+ */
+export async function insertInkIntoNote(note: Note): Promise<InsertResult> {
+  const sticker = note.ink?.sticker;
+  if (!sticker) return {ok: false, why: 'No handwriting in this sticky note'};
+  try {
+    if (!(await StickyNative?.fileExists(sticker))) {
+      return {ok: false, why: 'Handwriting file is missing on this device'};
+    }
+  } catch {}
+  const {path, why} = await currentNote();
+  if (!path) return {ok: false, why};
+  try {
+    const r: any = await PluginCommAPI.insertSticker(sticker);
+    if (!(r === true || (r && r.success && r.result !== false))) {
+      const msg = (r && r.error && r.error.message) || 'insertSticker refused';
+      blog(`[tonote] insertSticker failed: ${msg}`);
+      return {ok: false, why: msg};
+    }
+    await save();
+    blog(`[tonote] inserted ink ${sticker} into ${path}`);
+    return {ok: true};
+  } catch (e) {
+    blog(`[tonote] ink err: ${(e as Error)?.message}`);
+    return {ok: false, why: (e as Error)?.message};
   }
+}
+
+export async function insertIntoNote(note: Note): Promise<InsertResult> {
+  const text = (note.body || '').trim();
+  if (!text) return {ok: false, why: 'This sticky note is empty'};
+
+  const {path, why} = await currentNote();
+  if (!path) return {ok: false, why};
 
   let pageW = PAGE_W;
   let pageH = PAGE_H;

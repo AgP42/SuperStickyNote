@@ -7,6 +7,25 @@ Public releases only. Each one is a `.snplg` on the
 > 2.26.40 (A5 X / A6 X)** minimum. Devices on an earlier Chauvet need **v0.9.1**. A build
 > for one firmware doesn't run on the other.
 
+## v2.1.0 — 2026-10-18
+
+Handwriting stays handwriting: a lasso capture can now keep the ink itself, not only the
+recognised text.
+
+- **Your handwriting on the sticky note.** A lasso capture keeps what you wrote, as you
+  wrote it, at its size on the page — on the floating card, in the Manager list and on the
+  note page. Shapes come along as drawn.
+- **Settings → Capture**: **Both** (the default — the handwriting, with its recognised
+  text underneath for search and export), **Handwriting** (no recognition: instant, and
+  for drawings), or **Text (OCR)** (the v2.0 behaviour).
+- **Insert ink** puts the handwriting back on a notebook page as real strokes, which you
+  can lasso, move or convert like any other writing. **Insert text** still drops the text
+  as a text box.
+- The handwriting is read-only on the card; the text under it stays editable.
+- **Deleting** a note deletes its handwriting files.
+- **Backups** (.json) carry the text but not the handwriting files: a backup restored on
+  another device keeps the text and shows no handwriting.
+
 ## v2.0.0 — 2026-09-20
 
 The Manager is redrawn in the device's own visual language, capture works in documents as

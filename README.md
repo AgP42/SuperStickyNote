@@ -13,17 +13,19 @@ and it becomes a sticky note that remembers where it came from.
 
 - **Sticky notes that float** over the NOTE and DOCUMENT apps — type, collapse, move,
   resize. 8 on screen by default, up to 40 if you want them.
-- **Capture handwriting** with the lasso: it's recognised and dropped into a new sticky
-  note, in a notebook *or* on a PDF annotation.
+- **Capture handwriting** with the lasso: the sticky note keeps it **as you wrote it**,
+  recognised as text, or both — in a notebook *or* on a PDF annotation.
 - **Capture PDF text**: select it, tap the plugin button in the selection toolbar. No
   recognition needed.
-- **Put text back on the page** as an editable text box, in the font and size you chose.
+- **Put it back on the page**: the handwriting as real ink, or the text as an editable
+  text box in the font and size you chose.
 - **Find them again**: every captured note links back to its file and page; filter by
   label, search the lot.
 
 ## Capture from the page
 
-Lasso handwriting in a notebook and it is recognised straight into a new sticky note.
+Lasso handwriting in a notebook and it lands in a new sticky note — as handwriting, as
+recognised text, or both (Settings → Capture).
 
 ![Lassoed handwriting captured into a sticky note](docs/screenshots/lasso-capture.png)
 
@@ -36,8 +38,9 @@ text and tap SuperStickyNote in the selection toolbar (circled below).
 
 ## Back to the page
 
-A sticky note isn't a dead end: its text goes back onto the notebook page as a real,
-editable text box — the second half of the first picture above.
+A sticky note isn't a dead end: its handwriting goes back onto the notebook page as real
+ink, and its text as a real, editable text box — the second half of the first picture
+above.
 
 ## The Manager
 

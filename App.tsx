@@ -48,6 +48,9 @@ import {
   setBubbleHidden,
   getFrameStyle,
   setFrameStyle,
+  getCaptureMode,
+  setCaptureMode,
+  CaptureMode,
   getMaxCards,
   setMaxCards,
   SAFE_MAX_CARDS,
@@ -62,7 +65,7 @@ import {
 } from './src/store';
 import {ICONS} from './src/icons';
 import {dp, T, CARD_H, ACTION_H, BLACK, WHITE, DOTTED} from './src/dimens';
-import {insertIntoNote} from './src/tonote';
+import {insertIntoNote, insertInkIntoNote} from './src/tonote';
 
 const FONT_KEYS: FontKey[] = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
 /** Breathing room above the first card — counted out of the page arithmetic. */
@@ -520,11 +523,17 @@ const NoteCard = ({
           {noteTitle(note)}
         </Text>
       </View>
-      <Text
-        style={[styles.cardBody, {fontFamily: rnFamily()}]}
-        numberOfLines={2}>
-        {snippetOf(note)}
-      </Text>
+      {note.ink ? (
+        <View style={styles.cardInk}>
+          <InkImage ink={note.ink} maxH={T.lhBody * 2} />
+        </View>
+      ) : (
+        <Text
+          style={[styles.cardBody, {fontFamily: rnFamily()}]}
+          numberOfLines={2}>
+          {snippetOf(note)}
+        </Text>
+      )}
       <View style={styles.cardMeta}>
         <Text style={styles.metaTxt}>{fmtWhen(note.updatedAt)}</Text>
         {!!source && (
@@ -638,6 +647,32 @@ const Pager = ({
   </View>
 );
 
+// ---- Captured handwriting --------------------------------------------------
+
+/** Tallest the handwriting may stand on the note screen; the editor takes the rest. */
+const INK_DETAIL_H = dp(200);
+const EDITOR_H = dp(330);
+
+/**
+ * The capture's PNG at its own size (px → dp), shrunk to fit `maxH` — never
+ * blown up, so a single word stays a word. Left-aligned like the text.
+ */
+function inkSize(ink: NonNullable<Note['ink']>, maxH: number) {
+  const k = Math.min(1 / PixelRatio.get(), maxH / Math.max(1, ink.h));
+  return {width: ink.w * k, height: ink.h * k};
+}
+
+const InkImage = ({ink, maxH}: {ink: NonNullable<Note['ink']>; maxH: number}) => {
+  return (
+    <Image
+      source={{uri: `file://${ink.png}`}}
+      style={[styles.ink, inkSize(ink, maxH)]}
+      resizeMode="contain"
+      accessibilityLabel="Handwriting"
+    />
+  );
+};
+
 // ---- Note screen -----------------------------------------------------------
 
 const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
@@ -713,9 +748,24 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
           </View>
         )}
 
+        {!!note.ink && (
+          <>
+            <Text style={styles.fieldLabel}>Handwriting</Text>
+            <InkImage ink={note.ink} maxH={INK_DETAIL_H} />
+          </>
+        )}
+
         <Text style={styles.fieldLabel}>Text</Text>
         <TextInput
-          style={[styles.editor, {fontFamily: rnFamily()}]}
+          style={[
+            styles.editor,
+            // The handwriting borrows its height from the editor, so the action
+            // bar stays where it always is.
+            note.ink && {
+              height: Math.max(dp(110), EDITOR_H - inkSize(note.ink, INK_DETAIL_H).height - dp(30)),
+            },
+            {fontFamily: rnFamily()},
+          ]}
           multiline
           textAlignVertical="top"
           placeholder="Type your note… (first line becomes the title)"
@@ -774,7 +824,16 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
         <View style={styles.actionBar}>
           <BarBtn label="Done" strong onPress={done} />
           <BarBtn label="Copy" onPress={copy} />
-          <BarBtn label="Insert in note" onPress={() => toNote(note)} />
+          {note.ink ? (
+            <>
+              <BarBtn label="Insert ink" onPress={() => toNote(note, 'ink')} />
+              {!!draft.trim() && (
+                <BarBtn label="Insert text" onPress={() => toNote(note, 'text')} />
+              )}
+            </>
+          ) : (
+            <BarBtn label="Insert in note" onPress={() => toNote(note)} />
+          )}
           <BarBtn label="Export" onPress={() => exportNote(note)} />
           <View style={styles.grow} />
           <BarBtn
@@ -867,6 +926,12 @@ const SettingRow = ({
     <View style={styles.ruleDotted} />
   </>
 );
+
+const CAPTURE_OPTS: {key: CaptureMode; label: string}[] = [
+  {key: 'both', label: 'Both'},
+  {key: 'ink', label: 'Handwriting'},
+  {key: 'text', label: 'Text (OCR)'},
+];
 
 const FRAME_OPTS: {key: FrameStyle; label: string}[] = [
   {key: 'off', label: 'Off'},
@@ -969,6 +1034,7 @@ const SettingsScreen = ({
   const font = getFont();
   const hidden = getBubbleHidden();
   const frame = getFrameStyle();
+  const capture = getCaptureMode();
 
   const exportTxt = async () => {
     try {
@@ -1072,6 +1138,20 @@ const SettingsScreen = ({
               bump();
             }}
           />
+        </SettingRow>
+
+        <SettingRow label="Capture" hint="What a lasso keeps in the new sticky note">
+          {CAPTURE_OPTS.map(o => (
+            <Opt
+              key={o.key}
+              label={o.label}
+              on={capture === o.key}
+              onPress={() => {
+                setCaptureMode(o.key);
+                bump();
+              }}
+            />
+          ))}
         </SettingRow>
 
         <SettingRow label="Frame on capture" hint="Box drawn on the note around captured text">
@@ -1181,13 +1261,13 @@ const PermissionBanner = () => {
  * Drop this sticky's text onto the note page underneath, as an editable text
  * box, and leave the Manager so the user lands on the result.
  */
-async function toNote(note: Note) {
-  const r = await insertIntoNote(note);
+async function toNote(note: Note, what: 'ink' | 'text' = note.ink ? 'ink' : 'text') {
+  const r = what === 'ink' ? await insertInkIntoNote(note) : await insertIntoNote(note);
   if (!r.ok) {
     toast(r.why || 'Insert failed');
     return;
   }
-  toast('Inserted in the note');
+  toast(what === 'ink' ? 'Handwriting inserted in the note' : 'Inserted in the note');
   closeView();
 }
 
@@ -1377,6 +1457,12 @@ const styles = StyleSheet.create({
   cardIconTxt: {fontSize: T.fsNote, color: BLACK},
   cardIconTxtOn: {color: WHITE},
   cardTitle: {flex: 1, fontSize: T.fsNote, fontWeight: '700', color: BLACK},
+  cardInk: {
+    height: T.lhBody * 2,
+    marginTop: dp(6),
+    justifyContent: 'center',
+  },
+  ink: {alignSelf: 'flex-start'},
   cardBody: {
     height: T.lhBody * 2,
     marginTop: dp(6),
@@ -1478,7 +1564,7 @@ const styles = StyleSheet.create({
   noteTitle: {fontSize: T.fsSection, fontWeight: '700', color: BLACK},
   fieldLabel: {fontSize: T.fsMeta, color: BLACK, marginTop: dp(16), marginBottom: dp(7)},
   editor: {
-    height: dp(330),
+    height: EDITOR_H,
     borderWidth: T.hair,
     borderColor: BLACK,
     borderRadius: T.radCard,

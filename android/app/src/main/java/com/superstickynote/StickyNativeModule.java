@@ -94,6 +94,9 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         TextView titleView;
         LinearLayout labelsBox;
         View dividerView;
+        /** The captured handwriting (PNG), above the text. GONE when there is none. */
+        ImageView inkView;
+        String inkPath = "";
         EditText body;
         View doneView;
         View closeView;
@@ -280,6 +283,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                     }
                     String font = n.hasKey("font") && !n.isNull("font") ? n.getString("font") : "sans";
                     boolean collapsed = n.hasKey("collapsed") && n.getBoolean("collapsed");
+                    String ink = n.hasKey("ink") && !n.isNull("ink") ? n.getString("ink") : "";
                     int fontSp = n.hasKey("fontSize") && !n.isNull("fontSize")
                             ? n.getInt("fontSize") : DEFAULT_FONT_SP;
                     int x = n.hasKey("x") && !n.isNull("x") ? n.getInt("x") : -1;
@@ -298,6 +302,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                     } else {
                         addCard(ctx, id, icon, body, labels, x, y, w, h, collapsed, fontSp);
                     }
+                    applyInk(cards.get(id), ink);
                     applyFont(cards.get(id), font);
                 }
                 promise.resolve(true);
@@ -369,7 +374,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         c.iconView = iconV;
 
         TextView titleV = new TextView(ctx);
-        titleV.setText(firstLine(body));
+        titleV.setText(firstLine(body, false));
         titleV.setTextColor(Color.BLACK);
         titleV.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSp); // title scales with the size setting
         titleV.setTypeface(titleV.getTypeface(), android.graphics.Typeface.BOLD);
@@ -416,6 +421,19 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         panel.addView(div, divLP);
         c.dividerView = div;
 
+        // Captured handwriting, shown as drawn. Read-only: the text below stays
+        // the editable part. WRAP width keeps it at its size on the page (a
+        // one-word capture is not blown up to the card's width); a wider one is
+        // scaled down to fit, keeping its aspect ratio.
+        ImageView inkV = new ImageView(ctx);
+        inkV.setAdjustViewBounds(true);
+        inkV.setScaleType(ImageView.ScaleType.FIT_START);
+        inkV.setVisibility(View.GONE);
+        LinearLayout.LayoutParams inkLP = wrapLP();
+        inkLP.bottomMargin = dp(6);
+        panel.addView(inkV, inkLP);
+        c.inkView = inkV;
+
         EditText bodyV = new EditText(ctx);
         bodyV.setBackgroundColor(Color.TRANSPARENT);
         bodyV.setPadding(0, 0, 0, 0);
@@ -443,7 +461,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int cnt) {}
             @Override public void onTextChanged(CharSequence s, int a, int b, int cnt) {}
             @Override public void afterTextChanged(Editable e) {
-                c.titleView.setText(firstLine(e.toString()));
+                c.titleView.setText(firstLine(e.toString(), !c.inkPath.isEmpty()));
                 // Stream to JS (JS debounces the disk write) so text is never lost —
                 // a focusable overlay can't reliably detect blur, so we don't wait for it.
                 if (c.muteWatcher) return;
@@ -654,7 +672,7 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                         c.body.setSelection(Math.min(sel, c.body.getText().length()));
                     } catch (Exception ignored) {}
                 }
-                c.titleView.setText(firstLine(body));
+                c.titleView.setText(firstLine(body, !c.inkPath.isEmpty()));
             }
             if (w > 0) c.params.width = w;
             if (h > 0) {
@@ -684,6 +702,29 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
             fontCache.put(sel, tf);
         }
         return tf;
+    }
+
+    /**
+     * Show the card's handwriting PNG, or hide the view. Decoded only when the
+     * path changes — a sync carries every open card, and re-decoding on each one
+     * would repaint the e-ink panel for nothing. A missing file (a backup
+     * restored on another device) just leaves the text.
+     */
+    private void applyInk(Card c, String path) {
+        if (c == null || c.inkView == null) return;
+        String p = path == null ? "" : path;
+        if (p.equals(c.inkPath)) return;
+        android.graphics.Bitmap bmp = null;
+        if (!p.isEmpty() && new File(p).isFile()) {
+            try { bmp = android.graphics.BitmapFactory.decodeFile(p); } catch (Exception ignored) {}
+        }
+        c.inkPath = bmp != null ? p : "";
+        c.inkView.setImageBitmap(bmp);
+        // Auto-sized cards cap the picture like the body, so a tall capture
+        // doesn't push the card off-screen; a resized card gives the text the rest.
+        c.inkView.setMaxHeight(dp(260));
+        c.titleView.setText(firstLine(c.body.getText().toString(), bmp != null));
+        applyCollapse(c);
     }
 
     private void applyFont(Card c, String path) {
@@ -735,6 +776,9 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
         c.dividerView.setVisibility(vis);
         c.body.setVisibility(vis);
         c.resizeHandle.setVisibility(vis);
+        if (c.inkView != null) {
+            c.inkView.setVisibility(c.collapsed || c.inkPath.isEmpty() ? View.GONE : View.VISIBLE);
+        }
         if (c.collapsed) {
             c.clipBar.setVisibility(View.GONE);
             c.params.height = WindowManager.LayoutParams.WRAP_CONTENT; // shrink to the bar
@@ -919,13 +963,14 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
                 && ry >= loc[1] && ry <= loc[1] + target.getHeight();
     }
 
-    private static String firstLine(String body) {
-        if (body == null) return "Untitled";
+    private static String firstLine(String body, boolean hasInk) {
+        String none = hasInk ? "Handwritten note" : "Untitled";
+        if (body == null) return none;
         for (String line : body.split("\n")) {
             String t = line.trim();
             if (!t.isEmpty()) return t;
         }
-        return "Untitled";
+        return none;
     }
 
     // ---- Ghost cleanup ----------------------------------------------------
@@ -1004,6 +1049,25 @@ public class StickyNativeModule extends ReactContextBaseJavaModule {
             promise.resolve(new String(all, "UTF-8"));
         } catch (Exception e) {
             promise.reject("READ_FAILED", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void deleteFile(String path, Promise promise) {
+        try {
+            File f = new File(path);
+            promise.resolve(!f.exists() || f.delete());
+        } catch (Exception e) {
+            promise.reject("DELETE_FAILED", e.getMessage(), e);
+        }
+    }
+
+    @ReactMethod
+    public void fileExists(String path, Promise promise) {
+        try {
+            promise.resolve(new File(path).isFile());
+        } catch (Exception e) {
+            promise.reject("EXISTS_FAILED", e.getMessage(), e);
         }
     }
 

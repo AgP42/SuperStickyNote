@@ -28,6 +28,8 @@ import {
   toCardPayload,
   getBubbleHidden,
   getFrameStyle,
+  getCaptureMode,
+  inkDir,
   flush,
 } from './src/store';
 import {ensureFilePermissions} from './src/permissions';
@@ -257,10 +259,60 @@ function describeGeometries(geos) {
   return parts.join('\n');
 }
 
-// Lasso → "Add to sticky": OCR the selection and drop it into a new post-it.
+/** Longest side of the ink PNG, in px. Page px ≈ screen px, so most captures
+ *  keep their on-page size; only a very large selection is scaled down. */
+const INK_MAX_PX = 900;
+
+/**
+ * Keep the lassoed handwriting itself, as native ink: a .sticker (what
+ * insertSticker puts back on a page) and a PNG of it for the card. Must run
+ * while the lasso is still active. Same SDK sequence as SuperDashboard's clips.
+ * Returns null when the firmware refuses: the capture then falls back to text.
+ */
+async function captureInk() {
+  try {
+    const dir = await inkDir();
+    const base = `${dir}/ink_${Date.now().toString(36)}`;
+    const sticker = `${base}.sticker`;
+    const png = `${base}.png`;
+    const sr = await PluginCommAPI.saveStickerByLasso(sticker);
+    if (!(sr && sr.success && sr.result !== false)) {
+      blog(`[ink] saveStickerByLasso failed: ${(sr && sr.error && sr.error.message) || 'refused'}`);
+      return null;
+    }
+    let w = 480;
+    let h = 320;
+    try {
+      const zr = await PluginCommAPI.getStickerSize(sticker);
+      const z = zr && zr.success ? zr.result : null;
+      if (z && z.width > 0 && z.height > 0) {
+        const k = Math.min(1, INK_MAX_PX / Math.max(z.width, z.height));
+        w = Math.max(1, Math.round(z.width * k));
+        h = Math.max(1, Math.round(z.height * k));
+      }
+    } catch (e) {
+      blog(`[ink] getStickerSize failed: ${e && e.message}`);
+    }
+    const tr = await PluginCommAPI.generateStickerThumbnail(sticker, png, {width: w, height: h});
+    if (!(tr && tr.success && tr.result !== false)) {
+      blog(`[ink] thumbnail failed: ${(tr && tr.error && tr.error.message) || 'refused'}`);
+      StickyNative?.deleteFile(sticker).catch(() => {});
+      return null;
+    }
+    blog(`[ink] saved ${sticker} (${w}x${h})`);
+    return {sticker, png, w, h};
+  } catch (e) {
+    blog(`[ink] err: ${e && e.message}`);
+    return null;
+  }
+}
+
+// Lasso → "Add to sticky": keep the selection's handwriting and/or its OCR text
+// (Settings → Capture) in a new post-it.
 async function handleLassoToSticky() {
   try {
-    ToastAndroid.show('Recognizing…', ToastAndroid.SHORT);
+    const mode = getCaptureMode();
+    ToastAndroid.show(mode === 'ink' ? 'Capturing…' : 'Recognizing…', ToastAndroid.SHORT);
     // Element reads (getLassoElements/recognizeElements) + getPageSize hit shared
     // storage → gated behind FILE:READ on the preview firmware. Guard here so a
     // first-run OCR before boot's grant doesn't throw a SecurityException.
@@ -326,9 +378,12 @@ async function handleLassoToSticky() {
         blog(`[lasso] getLassoRect failed: ${e && e.message}`);
       }
     }
+    // The ink first: it reads the lasso as the user drew it, before anything
+    // below draws on the page or clears the selection.
+    const ink = mode === 'text' ? null : await captureInk();
     // Full page size (NOT the lasso rect) or the recognizer throws.
     let text = '';
-    if (textEls.length > 0) {
+    if (mode !== 'ink' && textEls.length > 0) {
       const recR = await PluginCommAPI.recognizeElements(textEls, size);
       text = recR && recR.success ? (recR.result || '').trim() : '';
     }
@@ -347,10 +402,11 @@ async function handleLassoToSticky() {
         e && e.recycle && e.recycle();
       } catch {}
     }
-    if (!text) {
+    if (!text && !ink && mode !== 'ink') {
       // Only now, with no handwriting to show, describe the shapes instead — so a
       // shape-only lasso still makes a sticky. Still selected here (we clear the
-      // lasso further down), so getLassoGeometries() sees them.
+      // lasso further down), so getLassoGeometries() sees them. With the ink kept,
+      // the shapes are already on the card as drawn.
       try {
         const geoR = await PluginCommAPI.getLassoGeometries();
         const geos = geoR && geoR.success ? geoR.result : null;
@@ -359,8 +415,8 @@ async function handleLassoToSticky() {
         blog(`[lasso] getLassoGeometries failed: ${e && e.message}`);
       }
     }
-    if (!text) {
-      ToastAndroid.show('Nothing recognized', ToastAndroid.SHORT);
+    if (!text && !ink) {
+      ToastAndroid.show(mode === 'ink' ? 'Nothing captured' : 'Nothing recognized', ToastAndroid.SHORT);
       return;
     }
     // Optionally mark on the note what we just captured.
@@ -382,6 +438,7 @@ async function handleLassoToSticky() {
       sourceFile: path,
       sourcePage: page,
       sourceKind: isNote ? 'note' : 'doc',
+      ...(ink ? {ink} : {}),
       ...(autoLabels.length > 0 ? {labels: autoLabels} : {}),
     });
     if (!atLimit) {
@@ -398,7 +455,7 @@ async function handleLassoToSticky() {
     );
   } catch (e) {
     blog(`[lasso] err: ${e && e.message}`);
-    ToastAndroid.show(`OCR error: ${e && e.message}`, ToastAndroid.SHORT);
+    ToastAndroid.show(`Capture error: ${e && e.message}`, ToastAndroid.SHORT);
   }
 }
 

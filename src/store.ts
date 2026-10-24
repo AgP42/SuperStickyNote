@@ -54,7 +54,22 @@ export interface Note {
   // Which app the capture came from: a NOTE lasso, or a DOC/PDF text selection.
   // Absent on notes made before 1.3 and on manually-created ones.
   sourceKind?: 'note' | 'doc';
+  // The lassoed handwriting itself, kept as native ink: `sticker` goes back on a
+  // page with insertSticker, `png` is its picture on the card and in the Manager.
+  // Both live in the private data dir. Absent on typed and text-only captures.
+  ink?: Ink;
 }
+
+export interface Ink {
+  sticker: string;
+  png: string;
+  w: number; // png px
+  h: number;
+}
+
+/** What a lasso capture keeps: the handwriting, its recognized text, or both. */
+export type CaptureMode = 'both' | 'ink' | 'text';
+export const CAPTURE_MODES: CaptureMode[] = ['both', 'ink', 'text'];
 
 let cache: Note[] = [];
 let fontKey: FontKey = 'M';
@@ -64,6 +79,7 @@ let bubbleHidden = false; // hide the ✚ launcher bubble
 export type FrameStyle = 'off' | 'black' | 'grey1' | 'grey2';
 export const FRAME_STYLES: FrameStyle[] = ['off', 'black', 'grey1', 'grey2'];
 let frameStyle: FrameStyle = 'off';
+let captureMode: CaptureMode = 'both';
 /** How many sticky notes the user allows on screen at once (1…MAX_CARDS). */
 let maxCards = 8;
 export const DEFAULT_MAX_CARDS = 8;
@@ -71,6 +87,7 @@ export const DEFAULT_MAX_CARDS = 8;
 export const SAFE_MAX_CARDS = 8;
 let loaded = false;
 let notesPath = '';
+let inkPath = '';
 let settingsPath = '';
 /**
  * `fromCard` = the change was typed in the floating card itself, so the native
@@ -130,6 +147,7 @@ export async function initStore(): Promise<void> {
   }
   notesPath = `${dataDir}/notes.json`;
   settingsPath = `${dataDir}/settings.json`;
+  inkPath = `${dataDir}/ink`;
 
   try {
     await StickyNative?.ensureDir(dataDir);
@@ -170,6 +188,7 @@ export async function initStore(): Promise<void> {
     } else if (s && (s.frameOnCapture === true || typeof s.frameStyle === 'string')) {
       frameStyle = 'black'; // migrate the pre-1.0 boolean / earlier solid|dashed|fill
     }
+    if (s && CAPTURE_MODES.includes(s.captureMode)) captureMode = s.captureMode;
   } catch {}
   loaded = true;
 }
@@ -179,7 +198,7 @@ export async function initStore(): Promise<void> {
 function saveSettings(): void {
   StickyNative?.writeFile(
     settingsPath,
-    JSON.stringify({fontKey, font: fontSel, bubbleHidden, frameStyle, maxCards}),
+    JSON.stringify({fontKey, font: fontSel, bubbleHidden, frameStyle, maxCards, captureMode}),
   ).catch(() => {});
 }
 
@@ -211,6 +230,24 @@ export function setFrameStyle(s: FrameStyle): void {
   frameStyle = s;
   saveSettings();
   notify({quiet: true});
+}
+
+// ---- What a lasso capture keeps -------------------------------------------
+
+export function getCaptureMode(): CaptureMode {
+  return captureMode;
+}
+
+export function setCaptureMode(m: CaptureMode): void {
+  captureMode = m;
+  saveSettings();
+  notify({quiet: true});
+}
+
+/** Private folder for captured ink (.sticker + .png), created on demand. */
+export async function inkDir(): Promise<string> {
+  await StickyNative?.ensureDir(inkPath);
+  return inkPath;
 }
 
 // ---- Bubble (✚ launcher) visibility -------------------------------------
@@ -371,7 +408,16 @@ export function placeForOpen(id: string): void {
 }
 
 export function remove(id: string): void {
+  const gone = cache.find(n => n.id === id);
   cache = cache.filter(n => n.id !== id);
+  // Only files in OUR ink folder: an imported backup can point anywhere.
+  if (gone?.ink) {
+    for (const f of [gone.ink.sticker, gone.ink.png]) {
+      if (f && inkPath && f.startsWith(`${inkPath}/`)) {
+        StickyNative?.deleteFile(f).catch(() => {});
+      }
+    }
+  }
   scheduleSave();
   notify();
 }
@@ -387,7 +433,7 @@ export function allLabels(): string[] {
 
 export function title(n: Note): string {
   const first = n.body.split('\n').find(l => l.trim().length > 0);
-  return first ? first.trim() : 'Untitled';
+  return first ? first.trim() : n.ink ? 'Handwritten note' : 'Untitled';
 }
 
 export function preview(n: Note): string {
@@ -395,7 +441,7 @@ export function preview(n: Note): string {
   // Drop the title line from the preview so it isn't shown twice on the card.
   const firstIdx = lines.findIndex(l => l.trim().length > 0);
   const rest = lines.slice(firstIdx + 1).join('\n').trim();
-  return rest || (n.body.trim() ? '' : '(empty)');
+  return rest || (n.body.trim() || n.ink ? '' : '(empty)');
 }
 
 export function toCardPayload(n: Note): CardPayload {
@@ -411,6 +457,7 @@ export function toCardPayload(n: Note): CardPayload {
     fontSize: fontSp(),
     labels: n.labels || [],
     font: fontSel,
+    ink: n.ink?.png || '',
   };
 }
 
