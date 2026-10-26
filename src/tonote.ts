@@ -8,8 +8,10 @@
  * process while the focused window belongs to the note app, so getPrimaryClip()
  * always comes back empty. The SDK's own insert path has no such restriction.
  *
- * NOTE-only: text boxes are a note main-layer feature, a DOC/PDF has none, and
- * insertText targets the CURRENTLY displayed page.
+ * Handwriting goes on a notebook or a document page; a text box only on a
+ * notebook page — on a PDF the firmware refuses insertText ("This app is not
+ * allowed to use this API", code 102, device 2026-10-25). insertText targets
+ * the CURRENTLY displayed page.
  *
  * Two firmware traps, both learned the hard way in SuperDashboard's paste:
  *  1. a freshly inserted text box renders at a tiny default size until the first
@@ -22,6 +24,7 @@
 import {PluginCommAPI, PluginFileAPI, PluginNoteAPI} from 'sn-plugin-lib';
 
 import {StickyNative, blog} from './native';
+import {insertStrokesIntoNote} from './pastestrokes';
 import {fontSp, getFont, Note} from './store';
 
 /** Unwrap the SDK's APIResponse shape. */
@@ -60,36 +63,85 @@ const LINE = 5 / 3;
 export interface InsertResult {
   ok: boolean;
   why?: string;
+  // ok, but some of it could not go down: why.
+  partial?: string;
 }
 
-/** The open file, when it is a note — the only place a text box or a sticker can go. */
-async function currentNote(): Promise<{path?: string; why?: string}> {
+/** The open file, when it can take `what`: ink on a notebook or a document, text on a notebook. */
+async function currentPage(what: 'ink' | 'text'): Promise<{path?: string; why?: string}> {
   let path: string | undefined;
   try {
     path = un<string>(await PluginCommAPI.getCurrentFilePath());
   } catch (e) {
     blog(`[tonote] getCurrentFilePath failed: ${(e as Error)?.message}`);
   }
-  if (!path) return {why: 'Open a note first'};
-  if (!/\.note$/i.test(path)) return {why: 'Only a note page can take this'};
+  if (!path) return {why: 'Open a notebook or a document first'};
+  if (!/\.(note|pdf|epub)$/i.test(path)) return {why: 'Open a notebook or a document first'};
+  const doc = path.match(/\.(pdf|epub)$/i);
+  if (what === 'text' && doc) {
+    const kind = doc[1].toUpperCase();
+    return {why: `No text box on a ${kind}: only handwriting can be put on a ${kind}`};
+  }
   return {path};
 }
 
 /**
- * Put the captured handwriting back as native ink (insertSticker), on the
- * displayed page: real strokes again, which can be lassoed, moved or converted
- * like any other writing. The firmware chooses where it lands.
+ * Put a handwritten sticky back on the displayed page.
+ *
+ * A capture nobody changed goes back as native ink (insertSticker): real
+ * strokes again, which can be lassoed, moved or converted like any other
+ * writing; the firmware chooses where it lands. Anything written or erased in
+ * the card is rebuilt as strokes and goes in the same way (pastestrokes.ts).
  */
 export async function insertInkIntoNote(note: Note): Promise<InsertResult> {
   const sticker = note.ink?.sticker;
-  if (!sticker) return {ok: false, why: 'No handwriting in this sticky note'};
+  // The strokes are what gets pasted; the PNG is only their preview.
+  const drawing = note.drawing?.strokes;
+  if (!sticker && !drawing) return {ok: false, why: 'No handwriting in this sticky note'};
+  const {path, why} = await currentPage('ink');
+  if (!path) return {ok: false, why};
+  let any = false;
+  let failed: InsertResult | null = null;
+  if (sticker) {
+    const r = await insertSticker(sticker, path);
+    if (r.ok) {
+      any = true;
+      // The capture IS the drawing (3.0): nothing more to put down.
+      if (note.ink?.inDrawing) return r;
+    } else {
+      failed = r;
+    }
+    // Sticker gone (a backup restored elsewhere…): the strokes still go down.
+  }
+  if (drawing) {
+    const r = await insertStrokesIntoNote(note, path);
+    if (r.ok) any = true;
+    else failed = failed || r;
+  }
+  if (any) return failed ? {ok: true, partial: failed.why || 'failed'} : {ok: true};
+  return failed || {ok: false, why: 'Nothing to put on the page'};
+}
+
+/**
+ * "Put on page": the note's handwriting if it has some, otherwise its text.
+ * Never both: on a note from before 3.0 the text is the OCR of that same
+ * handwriting (the note screen offers it on its own). The card's button and
+ * the Manager's both come here.
+ */
+export async function pasteNote(note: Note): Promise<InsertResult & {what: string}> {
+  if (note.ink || note.drawing) return {...(await insertInkIntoNote(note)), what: 'Handwriting'};
+  if (note.kind === 'ink' || !(note.body || '').trim()) {
+    return {ok: false, why: 'This sticky note is empty', what: ''};
+  }
+  return {...(await insertIntoNote(note)), what: 'Text'};
+}
+
+async function insertSticker(sticker: string, path: string): Promise<InsertResult> {
   try {
     if (!(await StickyNative?.fileExists(sticker))) {
       return {ok: false, why: 'Handwriting file is missing on this device'};
     }
   } catch {}
-  const {path, why} = await currentNote();
-  if (!path) return {ok: false, why};
   try {
     const r: any = await PluginCommAPI.insertSticker(sticker);
     if (!(r === true || (r && r.success && r.result !== false))) {
@@ -110,7 +162,7 @@ export async function insertIntoNote(note: Note): Promise<InsertResult> {
   const text = (note.body || '').trim();
   if (!text) return {ok: false, why: 'This sticky note is empty'};
 
-  const {path, why} = await currentNote();
+  const {path, why} = await currentPage('text');
   if (!path) return {ok: false, why};
 
   let pageW = PAGE_W;
@@ -152,7 +204,7 @@ export async function insertIntoNote(note: Note): Promise<InsertResult> {
     });
     if (!(r && r.success)) {
       const msg = (r && r.error && r.error.message) || 'insertText refused';
-      blog(`[tonote] insertText failed: ${msg}`);
+      blog(`[tonote] insertText failed on ${path}: ${msg} ${JSON.stringify(r)}`);
       return {ok: false, why: msg};
     }
     // No save() here: the re-commit below rewrites the element straight away,

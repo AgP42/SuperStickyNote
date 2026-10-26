@@ -5,11 +5,14 @@
  * In-memory cache with a debounced atomic write; one writer here.
  */
 import {NativePluginManager} from 'sn-plugin-lib';
+
+import {DEFAULT_ICON, OLD_DEFAULT_ICON} from './icons';
 import {
   StickyNative,
   MAX_CARDS,
   EXPORT_DIR,
   JSON_BACKUP,
+  INK_BACKUP_DIR,
   LEGACY_DIR,
   CardPayload,
   blog,
@@ -64,6 +67,10 @@ export interface Note {
   // What was written with the pen IN the card: `strokes` is the vector JSON the
   // card draws from, `png` its picture for the Manager. Private data dir.
   drawing?: Drawing;
+  // A handwritten note just made (bubble, Manager) and never written on yet.
+  // Only such a note is discarded when left empty: an old note erased to
+  // nothing keeps its labels, title and source.
+  fresh?: boolean;
 }
 
 export interface Drawing {
@@ -78,6 +85,11 @@ export interface Ink {
   png: string;
   w: number; // png px
   h: number;
+  // 3.0: the capture's strokes are also the note's drawing, which the card
+  // shows (and lets you erase). The sticker is then kept only to put the
+  // capture back on the page as real strokes, and goes once the drawing is
+  // changed.
+  inDrawing?: boolean;
 }
 
 /**
@@ -185,6 +197,15 @@ export async function initStore(): Promise<void> {
     }
     cache = raw ? (JSON.parse(raw) as Note[]) : [];
     if (!Array.isArray(cache)) cache = [];
+    for (const n of cache) if (n && n.icon === OLD_DEFAULT_ICON) n.icon = DEFAULT_ICON;
+    // Handwritten notes made and never written on (the plugin went away
+    // before they were closed): nothing to keep.
+    const before = cache.length;
+    cache = cache.filter(n => !(n && isUnused(n)));
+    if (cache.length !== before) {
+      blog(`[store] ${before - cache.length} unused handwritten note(s) dropped`);
+      scheduleSave();
+    }
   } catch (e) {
     blog(`[store] load failed: ${(e as Error)?.message}`);
     cache = [];
@@ -296,8 +317,15 @@ export function setDrawing(id: string, d: Drawing | undefined): void {
   const old = n.drawing;
   if (old?.png && old.png !== d?.png) deleteInkFile(old.png);
   if (old?.strokes && !d) deleteInkFile(old.strokes);
+  // A capture whose strokes were changed in the card is no longer what the
+  // sticker holds: drop the sticker, the drawing is the note now.
+  const ink = n.ink?.inDrawing ? undefined : n.ink;
+  if (n.ink?.inDrawing) {
+    deleteInkFile(n.ink.sticker);
+    deleteInkFile(n.ink.png);
+  }
   // fromCard: the card already shows it, no need to sync it back.
-  update(id, {drawing: d}, {fromCard: true});
+  update(id, {drawing: d, ink, ...(d ? {fresh: false} : {})}, {fromCard: true});
 }
 
 // ---- Bubble (✚ launcher) visibility -------------------------------------
@@ -382,6 +410,7 @@ export function create(icon: string, kind: NoteMode = mode): Note {
     id: `n_${now.toString(36)}_${(seq++).toString(36)}`,
     icon,
     kind,
+    ...(kind === 'ink' ? {fresh: true} : {}),
     body: '',
     open: false,
     x: -1,
@@ -427,12 +456,21 @@ export function setSize(id: string, w: number, h: number): void {
 }
 
 export function setOpen(id: string, open: boolean): void {
+  const n = cache.find(x => x.id === id);
+  // Put away without anything on it (Hide, in the Manager): not worth keeping.
+  if (!open && n && isUnused(n)) {
+    remove(id);
+    return;
+  }
   update(id, {open});
 }
 
 /** Close every open sticky in ONE store change, so the cards sync once. */
 export function closeAll(): void {
   let changed = false;
+  const before = cache.length;
+  cache = cache.filter(n => !(n.open && isUnused(n)));
+  if (cache.length !== before) changed = true;
   for (const n of cache) {
     if (n.open) {
       n.open = false; // not an edit: updatedAt is the note's date in the list
@@ -457,6 +495,18 @@ export function placeForOpen(id: string): void {
   n.x = 60 + slot * STEP;
   n.y = 150 + slot * STEP;
   scheduleSave();
+}
+
+/** A handwritten note made and left without anything on it — not worth keeping. */
+export function isUnused(n: Note): boolean {
+  return (
+    !!n.fresh &&
+    n.kind === 'ink' &&
+    !n.drawing &&
+    !n.ink &&
+    !n.body.trim() &&
+    !(n.labels && n.labels.length)
+  );
 }
 
 export function remove(id: string): void {
@@ -504,7 +554,7 @@ export function toCardPayload(n: Note): CardPayload {
     fontSize: fontSp(),
     labels: n.labels || [],
     font: fontSel,
-    ink: n.ink?.png || '',
+    ink: n.ink && !n.ink.inDrawing ? n.ink.png : '',
     drawing: n.drawing?.strokes || '',
     kind: cardKind(n),
   };
@@ -542,6 +592,8 @@ export async function exportAllTxt(): Promise<number> {
   const used = new Map<string, number>();
   let n = 0;
   for (const note of cache) {
+    // Text files of text: a handwritten note has none (its body is a title).
+    if (note.kind === 'ink' || !note.body.trim()) continue;
     const base = baseName(note);
     const seen = used.get(base) || 0;
     used.set(base, seen + 1);
@@ -552,11 +604,60 @@ export async function exportAllTxt(): Promise<number> {
   return n;
 }
 
-/** Dump the whole notes set to a single .json backup in the visible folder. */
+/** A note's handwriting files (captures and what was written in the card). */
+function inkFilesOf(n: Note): string[] {
+  return [n.ink?.sticker, n.ink?.png, n.drawing?.strokes, n.drawing?.png].filter(
+    (f): f is string => !!f,
+  );
+}
+
+const fileName = (f: string) => f.slice(f.lastIndexOf('/') + 1);
+
+/**
+ * Dump the whole notes set to a single .json backup in the visible folder,
+ * with their handwriting copied into the folder next to it.
+ */
 export async function exportJson(): Promise<string> {
   await StickyNative?.ensureDir(EXPORT_DIR);
+  await StickyNative?.ensureDir(INK_BACKUP_DIR);
+  let copied = 0;
+  const keep: string[] = [];
+  for (const n of cache) {
+    for (const f of inkFilesOf(n)) {
+      keep.push(fileName(f));
+      try {
+        if (await StickyNative?.copyFile(f, `${INK_BACKUP_DIR}/${fileName(f)}`)) copied++;
+      } catch (e) {
+        blog(`[export] copy ${f} failed: ${(e as Error)?.message}`);
+      }
+    }
+  }
   await StickyNative?.writeFile(JSON_BACKUP, JSON.stringify(cache, null, 2));
+  // The backup is a snapshot: handwriting no note uses any more goes.
+  let pruned = 0;
+  try {
+    pruned = (await StickyNative?.pruneDir(INK_BACKUP_DIR, keep)) || 0;
+  } catch (e) {
+    blog(`[export] prune failed: ${(e as Error)?.message}`);
+  }
+  blog(`[export] ${cache.length} notes, ${copied} handwriting files, ${pruned} old ones removed`);
   return JSON_BACKUP;
+}
+
+/**
+ * A backed-up note's handwriting file, back into our ink folder when it isn't
+ * on this device any more (another device, or the note was deleted).
+ */
+async function restoreInkFile(f: string | undefined): Promise<string | undefined> {
+  if (!f) return f;
+  try {
+    if (await StickyNative?.fileExists(f)) return f;
+    const to = `${inkPath}/${fileName(f)}`;
+    if (await StickyNative?.copyFile(`${INK_BACKUP_DIR}/${fileName(f)}`, to)) return to;
+  } catch (e) {
+    blog(`[import] restore ${f} failed: ${(e as Error)?.message}`);
+  }
+  return f;
 }
 
 /**
@@ -584,6 +685,16 @@ export async function importJson(): Promise<number> {
     if (!n.id) n.id = `n_imp_${Date.now().toString(36)}_${(seq++).toString(36)}`;
     if (existing.has(n.id)) continue; // never overwrite an existing note
     existing.add(n.id);
+    if (n.ink) {
+      n.ink = {...n.ink, sticker: (await restoreInkFile(n.ink.sticker)) || '', png: (await restoreInkFile(n.ink.png)) || ''};
+    }
+    if (n.drawing) {
+      n.drawing = {
+        ...n.drawing,
+        strokes: (await restoreInkFile(n.drawing.strokes)) || '',
+        png: (await restoreInkFile(n.drawing.png)) || '',
+      };
+    }
     cache.push({...n, open: false}); // add to the list, don't auto-float
     added++;
   }

@@ -1,9 +1,9 @@
 {
   "name": "SuperStickyNote",
-  "desc": "Floating sticky quick-notes for Supernote. Tap the launcher bubble and a draggable post-it appears over your notebook or document; type on it with the keyboard, or write on it with the pen. Lasso handwriting to keep it in a sticky note as you wrote it, recognised as text, or both; or select PDF text. Every capture links back to its page, and goes back on the page as ink or as an editable text box. Notes and .txt exports live in MyStyle/Plugins/SuperStickyNote.",
+  "desc": "Floating sticky notes over your notebooks and documents. Tap the bubble and a post-it appears; drag it, resize it, fold it, close it — it is still in the Manager.\n\nTwo kinds of notes (Settings → Mode):\n• Handwriting — write on the sticky note with the pen, erase, undo. Lasso handwriting on a page to copy it into a sticky note, then write over it or erase parts of it.\n• Text (OCR) — type with the keyboard; a lasso is recognised as text. PDF text selections always become text notes.\nEvery capture links back to its page, and any note can be put back on the page: handwriting as real strokes (notebooks and PDFs), text as an editable text box (notebooks).\n\nStatus (3.0): handwriting in sticky notes is new. It uses the notebook's own pen engine. Tested on the Manta so far. Handwriting is not searchable — use titles and labels.\n\nPermissions:\n• Read files — to read what you lasso (the strokes, the page size) and to find a capture's source page again.\n• Write files — to save the .txt exports and the backup (with its handwriting) in MyStyle/Plugins/SuperStickyNote, and to put a note back on a page. The notes themselves stay in the plugin's private storage.\nNothing leaves the device: no network, no account, no tracking.",
   "iconPath": "assets/icon.png",
-  "versionName": "3.0.0",
-  "versionCode": "55",
+  "versionName": "3.1.0",
+  "versionCode": "76",
   "pluginID": "89zc2wykgjiw30i7",
   "pluginKey": "SuperStickyNote",
   "jsMainPath": "index",

@@ -32,9 +32,18 @@ interface StickyNativeType {
   writeFile(path: string, content: string): Promise<boolean>;
   readTextFile(path: string): Promise<string>;
   deleteFile(path: string): Promise<boolean>;
+  copyFile(from: string, to: string): Promise<boolean>;
+  pruneDir(dir: string, keepNames: string[]): Promise<number>;
   fileExists(path: string): Promise<boolean>;
   setInkDir(path: string): Promise<boolean>;
+  importDrawing(
+    json: string,
+    id: string,
+  ): Promise<{strokes: string; png: string; w: number; h: number; count: number; cardW: number} | null>;
+  finishWritingNow(): Promise<boolean>;
   beginWriting(id: string): Promise<boolean>;
+  bringToFront(id: string): Promise<boolean>;
+  setManagerOpen(open: boolean): Promise<boolean>;
   setNotePen(type: number, width: number, color: number): Promise<boolean>;
   ensureDir(path: string): Promise<boolean>;
   clipboardSet(text: string): Promise<boolean>;
@@ -67,6 +76,8 @@ export const MAX_CARDS = 40;
  */
 export const EXPORT_DIR = '/storage/emulated/0/MyStyle/Plugins/SuperStickyNote';
 export const JSON_BACKUP = `${EXPORT_DIR}/SuperStickyNote-notes.json`;
+/** The handwriting of the .json backup, next to it. */
+export const INK_BACKUP_DIR = `${EXPORT_DIR}/SuperStickyNote-ink`;
 /** Pre-0.4 VISIBLE data location — migrated away from on first launch. */
 export const LEGACY_DIR = '/storage/emulated/0/MyStyle/Plugin/SuperStickyNote';
 

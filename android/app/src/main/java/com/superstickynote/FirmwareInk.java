@@ -109,13 +109,23 @@ final class FirmwareInk {
      * a tool the firmware has no pen code for (an eraser, a lasso).
      */
     int[] setNotePen(int type, int width, int color) {
+        notePen = mapPen(type, width, color);
+        if (notePen != null && claimed) sendPen(notePen); // the card was claimed before JS answered
+        return notePen;
+    }
+
+    /**
+     * SDK pen (getPenInfo, or a stroke read from the page) → firmware pen
+     * {type, width, colour}. null for a tool with no pen code.
+     */
+    static int[] mapPen(int type, int width, int color) {
         int nib;
         switch (type) {
             case 1: case 16: nib = 16; break;   // pressure pen → ink
             case 10: nib = 10; break;           // fineliner → needle
             case 11: nib = 11; break;           // marker
             case 14: case 15: nib = 15; break;  // calligraphy (the device reports 15)
-            default: notePen = null; return null;
+            default: return null;
         }
         int col;
         switch (color) {
@@ -124,9 +134,7 @@ final class FirmwareInk {
             case 0xFE: col = 254; break;
             default: col = 0;
         }
-        notePen = new int[]{nib, width > 0 ? width : 1000, col};
-        if (claimed) sendPen(notePen); // the card was claimed before JS answered
-        return notePen;
+        return new int[]{nib, width > 0 ? width : 1000, col};
     }
 
     private IBinder binder() {

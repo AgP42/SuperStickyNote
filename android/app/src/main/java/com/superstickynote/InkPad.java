@@ -40,8 +40,17 @@ final class InkPad extends View {
         void onFocusGained();
         /** The card's window lost focus while writing. */
         void onFocusLost();
+        /**
+         * The pen came near the pad (hover) or touched it (down): make sure the
+         * pen is still the card's before the stroke lands.
+         */
+        void onPenNear(boolean down);
         /** The undo stack changed (enable/disable the button). */
         void onUndoChanged(boolean canUndo);
+        /** At rest: the pen has hovered over the pad for a moment — about to write here. */
+        void onPenApproach();
+        /** At rest: the pen touched the pad (that stroke went to the page). */
+        void onPenDownAtRest();
     }
 
     // Firmware pen codes (see FirmwareInk).
@@ -85,6 +94,16 @@ final class InkPad extends View {
     private boolean dirty;
     private int[] pen = DEFAULT_PEN;
     private String hintText = "";
+    /** A handwritten card not being written on: grey, with an invitation to write. */
+    private boolean resting;
+    private boolean approachPending;
+    private static final long APPROACH_MS = 300;
+    private static final int REST_BG = 0xFFEEEEEE;
+    private static final String REST_HINT = "✎ Write here";
+    private final Runnable approach = () -> {
+        approachPending = false;
+        if (resting && !this.writing && this.listener != null) this.listener.onPenApproach();
+    };
     private Listener listener;
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -109,6 +128,13 @@ final class InkPad extends View {
     void setListener(Listener l) { listener = l; }
 
     void setHint(String s) { hintText = s; }
+
+    void setResting(boolean on) {
+        if (resting == on) return;
+        resting = on;
+        if (!on) { removeCallbacks(approach); approachPending = false; }
+        invalidate();
+    }
 
     /** The pen new strokes are written with (firmware codes). */
     void setPen(int[] p) { pen = p != null ? p : DEFAULT_PEN; }
@@ -182,13 +208,41 @@ final class InkPad extends View {
     }
 
     @Override
+    public boolean onHoverEvent(MotionEvent ev) {
+        int tool = ev.getToolType(0);
+        boolean pen = tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER;
+        int a = ev.getActionMasked();
+        if (writing && listener != null && pen && a == MotionEvent.ACTION_HOVER_ENTER) listener.onPenNear(false);
+        if (!writing && resting && pen) {
+            // The pen held over the pad for a moment, not just passing by.
+            if (a == MotionEvent.ACTION_HOVER_EXIT) {
+                removeCallbacks(approach);
+                approachPending = false;
+            } else if (!approachPending) {
+                approachPending = true;
+                postDelayed(approach, APPROACH_MS);
+            }
+            return true;
+        }
+        return super.onHoverEvent(ev);
+    }
+
+    @Override
     public boolean onTouchEvent(MotionEvent ev) {
-        if (!writing) return false;
         int tool = ev.getToolType(0);
         boolean penTool = tool == MotionEvent.TOOL_TYPE_STYLUS || tool == MotionEvent.TOOL_TYPE_ERASER;
+        if (!writing) {
+            if (resting && penTool && ev.getActionMasked() == MotionEvent.ACTION_DOWN && listener != null) {
+                removeCallbacks(approach);
+                approachPending = false;
+                listener.onPenDownAtRest();
+            }
+            return false;
+        }
         if (!penTool) return false;
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                if (listener != null) listener.onPenNear(true);
                 removeCallbacks(settle);
                 erasing = eraserTool || tool == MotionEvent.TOOL_TYPE_ERASER;
                 if (erasing) {
@@ -285,6 +339,9 @@ final class InkPad extends View {
             if (strokes.isEmpty() && cur == null && !hintText.isEmpty()) {
                 canvas.drawText(hintText, 16, 40, hint);
             }
+        } else if (resting) {
+            canvas.drawColor(REST_BG);
+            canvas.drawText(REST_HINT, 16, getHeight() - 14, hint);
         }
         for (Stroke s : strokes) drawStroke(canvas, s, paint);
     }
@@ -363,6 +420,73 @@ final class InkPad extends View {
             }
         } catch (Exception ignored) {}
         invalidate();
+    }
+
+    /**
+     * Strokes lassoed on the page: [{pen, w, c, pts:[x, y, p, …]}] in page px,
+     * pen/colour in SDK codes, pressure raw. They land at the pad's top-left,
+     * shrunk (never enlarged) to fit maxW. Returns how many were kept.
+     */
+    /** Full pressure on the page (the card keeps 0..1). */
+    static final float PAGE_PRESSURE_MAX = 4095f;
+
+    int importPage(String json, float maxW, float maxH) {
+        strokes.clear();
+        undo.clear();
+        List<float[]> raw = new ArrayList<>();
+        List<int[]> pens = new ArrayList<>();
+        float maxP = 0, maxPen = 0;
+        RectF b = new RectF(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE);
+        try {
+            JSONArray arr = new JSONArray(json);
+            for (int k = 0; k < arr.length(); k++) {
+                JSONObject so = arr.getJSONObject(k);
+                JSONArray a = so.getJSONArray("pts");
+                float[] pts = new float[a.length() - a.length() % 3];
+                if (pts.length < 3) continue;
+                for (int i = 0; i < pts.length; i++) pts[i] = (float) a.getDouble(i);
+                int[] pn = FirmwareInk.mapPen(so.optInt("pen", 10), so.optInt("w", 1000), so.optInt("c", 0));
+                if (pn == null) pn = DEFAULT_PEN.clone();
+                for (int i = 0; i + 2 < pts.length; i += 3) {
+                    b.union(pts[i], pts[i + 1]);
+                    maxP = Math.max(maxP, pts[i + 2]);
+                }
+                maxPen = Math.max(maxPen, widthOf(pn));
+                raw.add(pts);
+                pens.add(pn);
+            }
+        } catch (Exception ignored) {}
+        if (raw.isEmpty()) { invalidate(); return 0; }
+        float m = maxPen + 8;
+        float k = Math.min(1f, Math.min(
+                Math.max(1f, maxW - 2 * m) / Math.max(1f, b.width()),
+                Math.max(1f, maxH - 2 * m) / Math.max(1f, b.height())));
+        // Pressure comes raw from the page, 0..4095 (not 0..1 like a MotionEvent):
+        // on that scale, so it goes back to the page as it came.
+        float pScale = maxP > 1f ? 1f / PAGE_PRESSURE_MAX : 1f;
+        for (int j = 0; j < raw.size(); j++) {
+            float[] pts = raw.get(j);
+            for (int i = 0; i + 2 < pts.length; i += 3) {
+                pts[i] = (pts[i] - b.left) * k + m;
+                pts[i + 1] = (pts[i + 1] - b.top) * k + m;
+                pts[i + 2] = pts[i + 2] * pScale;
+            }
+            int[] pn = pens.get(j);
+            pn[1] = Math.max(1, Math.round(pn[1] * k)); // the line shrinks with the writing
+            strokes.add(new Stroke(pts, pn));
+        }
+        dirty = true;
+        invalidate();
+        return strokes.size();
+    }
+
+    /** Rightmost point drawn, in px. */
+    int contentRight() {
+        float r = 0;
+        for (Stroke s : strokes) {
+            for (int i = 0; i < s.pts.length; i += 3) r = Math.max(r, s.pts[i] + widthOf(s.pen));
+        }
+        return (int) Math.ceil(r);
     }
 
     /** Write {"v":2,"strokes":[{"pen":10,"w":1000,"c":0,"pts":[x,y,p,…]},…]} (atomic rename). */

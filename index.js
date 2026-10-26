@@ -33,10 +33,13 @@ import {
   setDrawing,
   getAll,
   remove,
+  isUnused,
   flush,
 } from './src/store';
 import {ensureFilePermissions} from './src/permissions';
 import {detectUnderlineLabels} from './src/underline';
+import {lassoStrokesJson} from './src/lassoink';
+import {pasteNote} from './src/tonote';
 
 AppRegistry.registerComponent(appName, () => App);
 
@@ -134,6 +137,8 @@ global.__ssnEnableOverlay = async () => {
   } catch {}
   await restoreOverlay();
   blog(`[boot] permission=${hasPermission} open=${getOpen().length}`);
+  // A fresh start never begins over the Manager: no stale "ink off" left.
+  StickyNative?.setManagerOpen(false).catch(() => {});
   // Reclaim old plugin versions (PluginHost keeps them all on reinstall).
   try {
     const dir = await PluginManager.getPluginDirPath();
@@ -159,8 +164,14 @@ DeviceEventEmitter.addListener('onNewNote', async () => {
   try {
     await syncOpenCards();
     // Handwriting mode: straight to the pen. Text: straight to the keyboard.
-    if (note.kind === 'ink') await StickyNative?.beginWriting(note.id);
-    else await StickyNative?.beginEdit(note.id);
+    if (note.kind === 'ink') {
+      // Writing could not start (no ink folder): don't leave a blank note behind.
+      const writing = await StickyNative?.beginWriting(note.id);
+      if (!writing && isUnused(note)) {
+        remove(note.id);
+        await syncOpenCards();
+      }
+    } else await StickyNative?.beginEdit(note.id);
   } catch (e) {
     blog(`[new] err: ${e && e.message}`);
   }
@@ -177,7 +188,22 @@ DeviceEventEmitter.addListener('onCardClose', payload => {
   const id = payload && payload.id;
   if (!id) return;
   cardRev.delete(id); // a re-opened card starts its revisions from scratch
+  const note = getAll().find(n => n.id === id);
+  if (note && isUnused(note)) {
+    blog(`[ink] unused handwritten note ${id} discarded on close`);
+    remove(id);
+    return;
+  }
   setOpen(id, false); // native already removed the card view
+});
+
+// 🗑 tapped twice in the card: native already removed the card view.
+DeviceEventEmitter.addListener('onCardDelete', payload => {
+  const id = payload && payload.id;
+  if (!id) return;
+  cardRev.delete(id);
+  remove(id);
+  ToastAndroid.show('Sticky note deleted', ToastAndroid.SHORT);
 });
 
 DeviceEventEmitter.addListener('onCardMoved', payload => {
@@ -315,6 +341,7 @@ async function captureInk() {
 // Lasso → "Add to sticky": in Handwriting mode keep the selection's ink, in
 // Text mode recognise it (Settings → Mode), into a new post-it.
 async function handleLassoToSticky() {
+  managerClosed(); // a lasso is on the page, not over the Manager: the pen keeps its ink
   try {
     const mode = getMode();
     ToastAndroid.show(mode === 'ink' ? 'Capturing…' : 'Recognizing…', ToastAndroid.SHORT);
@@ -368,6 +395,9 @@ async function handleLassoToSticky() {
     // only a fallback for a truly text-less (shape-only) selection.
     const SHAPE_TYPES = new Set([700, 800]); // Element.TYPE_GEO, TYPE_FIVE_STAR
     const textEls = (els || []).filter(e => e && !SHAPE_TYPES.has(e.type));
+    // Pictures, text boxes and links: a handwritten sticky can't hold them.
+    const DROPPED_TYPES = new Set([200, 500, 501, 502, 600]);
+    const dropped = mode === 'ink' && (els || []).some(e => e && DROPPED_TYPES.has(e.type));
     // Grab the lasso bounds NOW (before we clear the selection) in case the user
     // enabled a "mark captured text" style below.
     // The frame is a geometry polygon, and a document takes those just fine — it
@@ -386,6 +416,15 @@ async function handleLassoToSticky() {
     // The ink first: it reads the lasso as the user drew it, before anything
     // below draws on the page or clears the selection.
     const ink = mode === 'text' ? null : await captureInk();
+    // And the same handwriting as strokes, for the card to show and erase.
+    let strokesJson = null;
+    if (mode === 'ink') {
+      try {
+        strokesJson = await lassoStrokesJson(els || [], size);
+      } catch (e) {
+        blog(`[ink] lasso strokes failed: ${e && e.message}`);
+      }
+    }
     // Full page size (NOT the lasso rect) or the recognizer throws.
     let text = '';
     if (mode !== 'ink' && textEls.length > 0) {
@@ -420,20 +459,16 @@ async function handleLassoToSticky() {
         blog(`[lasso] getLassoGeometries failed: ${e && e.message}`);
       }
     }
-    if (!text && !ink) {
-      ToastAndroid.show(mode === 'ink' ? 'Nothing captured' : 'Nothing recognized', ToastAndroid.SHORT);
+    if (!text && !ink && !strokesJson) {
+      ToastAndroid.show(
+        mode === 'ink'
+          ? dropped
+            ? 'Nothing captured — a handwritten sticky keeps strokes and shapes only'
+            : 'Nothing captured'
+          : 'Nothing recognized — Settings → Mode: Handwriting keeps drawings',
+        ToastAndroid.SHORT,
+      );
       return;
-    }
-    // Optionally mark on the note what we just captured.
-    if (lassoRect) {
-      await drawFrame(lassoRect, frameStyle);
-    }
-    // Auto-dismiss the lasso selection so the user doesn't have to tap away
-    // (2 = completely remove the lasso box; does NOT delete the handwriting).
-    try {
-      await PluginCommAPI.setLassoBoxState(2);
-    } catch (e) {
-      blog(`[lasso] setLassoBoxState failed: ${e && e.message}`);
     }
     const atLimit = getOpen().length >= getMaxCards();
     const note = create(DEFAULT_ICON);
@@ -446,12 +481,42 @@ async function handleLassoToSticky() {
       ...(ink ? {ink} : {}),
       ...(autoLabels.length > 0 ? {labels: autoLabels} : {}),
     });
+    if (strokesJson) {
+      const d = await StickyNative?.importDrawing(strokesJson, note.id).catch(() => null);
+      if (d) {
+        update(note.id, {
+          fresh: false,
+          drawing: {strokes: d.strokes, png: d.png, w: d.w, h: d.h},
+          ...(ink ? {ink: {...ink, inDrawing: true}} : {}),
+          w: d.cardW,
+        });
+      } else if (!ink && !text) {
+        // Neither the strokes nor the capture could be saved: no blank note.
+        remove(note.id);
+        ToastAndroid.show('Capture failed', ToastAndroid.SHORT);
+        return;
+      }
+    }
+    // Only now that the capture is saved: no frame around a capture that failed.
+    // Optionally mark on the note what we just captured.
+    if (lassoRect) {
+      await drawFrame(lassoRect, frameStyle);
+    }
+    // Auto-dismiss the lasso selection so the user doesn't have to tap away
+    // (2 = completely remove the lasso box; does NOT delete the handwriting).
+    try {
+      await PluginCommAPI.setLassoBoxState(2);
+    } catch (e) {
+      blog(`[lasso] setLassoBoxState failed: ${e && e.message}`);
+    }
     if (!atLimit) {
       placeForOpen(note.id);
       setOpen(note.id, true);
       await syncOpenCards();
     }
-    const labelNote = autoLabels.length > 0 ? ` · ${autoLabels.join(', ')}` : '';
+    const labelNote =
+      (autoLabels.length > 0 ? ` · ${autoLabels.join(', ')}` : '') +
+      (dropped ? ' · strokes and shapes only' : '');
     ToastAndroid.show(
       (atLimit
         ? 'Saved to a new sticky (screen full — see Manager)'
@@ -481,24 +546,74 @@ DeviceEventEmitter.addListener('onCardWriting', async () => {
   }
 });
 
+// An empty new note is NOT discarded here: writing can end without anyone
+// meaning to drop the note (✓, the pen passing over it, the Manager opening).
+// It goes when it is closed or hidden still empty (onCardClose, setOpen).
 DeviceEventEmitter.addListener('onCardDrawn', ({id, count, changed, strokes, png, w, h}) => {
   const note = getAll().find(n => n.id === id);
   if (!note) return;
-  // A handwritten note left with nothing on it (opened from the bubble, then
-  // closed unwritten) is not worth keeping.
-  if (count === 0 && note.kind === 'ink' && !note.ink && !note.body.trim()) {
-    blog(`[ink] empty handwritten note ${id} discarded`);
-    remove(id);
-    syncOpenCards().catch(() => {});
-    return;
-  }
   if (changed) setDrawing(id, count > 0 && strokes ? {strokes, png: png || '', w: w || 0, h: h || 0} : undefined);
 });
+
+// The card's "Put on page" button: the note onto the page under it —
+// handwriting as real strokes, otherwise text as a text box.
+DeviceEventEmitter.addListener('onCardPaste', async ({id}) => {
+  const note = getAll().find(n => n.id === id);
+  if (!note) return;
+  let r;
+  try {
+    r = await pasteNote(note);
+  } catch (e) {
+    blog(`[paste] err: ${e && e.message}`);
+    r = {ok: false, why: `Could not put it on the page: ${e && e.message}`};
+  }
+  ToastAndroid.show(
+    r.ok
+      ? r.partial
+        ? `Only part of the handwriting put on the page: ${r.partial}`
+        : `${r.what} put on the page`
+      : r.why || 'Could not put it on the page',
+    ToastAndroid.SHORT,
+  );
+});
+
+/**
+ * The Manager is really on screen (toolbar button, a card's icon): the pen
+ * draws no ink over it, where nothing would record it. Not on plugin start:
+ * a headless lasso starts the plugin too, and its pen must keep its ink. The
+ * note's pen first, so it is the one given back on close.
+ */
+let managerGen = 0;
+
+async function managerShown() {
+  const gen = ++managerGen;
+  // After the view has taken focus: the firmware hands the pen to whichever
+  // window takes focus, so a claim made before it would be undone.
+  await new Promise(r => setTimeout(r, 600));
+  if (gen !== managerGen) return; // closed meanwhile
+  try {
+    const r = await PluginCommAPI.getPenInfo();
+    const pen = r && r.success ? r.result : null;
+    if (pen && [pen.type, pen.width, pen.color].every(Number.isFinite)) {
+      await StickyNative?.setNotePen(pen.type, pen.width, pen.color);
+    }
+  } catch {}
+  if (gen !== managerGen) return;
+  StickyNative?.setManagerOpen(true).catch(() => {});
+}
+
+/** The Manager is gone: the pen's ink back on, and any pending "open" void. */
+function managerClosed() {
+  managerGen++;
+  StickyNative?.setManagerOpen(false).catch(() => {});
+}
+global.__ssnManagerClosed = managerClosed;
 
 // Tapping a card's icon opens the Manager (full list).
 DeviceEventEmitter.addListener('onOpenManager', async () => {
   try {
     await PluginManager.showPluginView(); // cards stay on top of the Manager
+    managerShown();
   } catch (e) {
     blog(`[openmgr] err: ${e && e.message}`);
   }
@@ -520,7 +635,14 @@ PluginManager.registerPluginLifeListener({
   onMsg: async msg => {
     const state = msg && typeof msg.state === 'number' ? msg.state : -1;
     blog(`[life] state=${state} (${LIFE[state] || '?'})`);
+    // The Manager is gone (stop, or the whole plugin): the pen's ink back on.
+    if (state >= 3) managerClosed();
     if (state === 4 || state === 5) {
+      try {
+        // A card being written on saves first, so its drawing makes it into
+        // notes.json (onCardDrawn → setDrawing runs before the flush).
+        if (await StickyNative?.finishWritingNow()) await new Promise(r => setTimeout(r, 100));
+      } catch {}
       try {
         await flush(); // persist any debounced geometry/body edit before teardown
       } catch {}
@@ -552,6 +674,7 @@ PluginManager.registerButton(1, ['NOTE', 'DOC'], {
  * getLastSelectedText FAILS by design when nothing is selected.
  */
 async function handleDocSelection() {
+  managerClosed(); // on the page, not over the Manager
   try {
     let text = '';
     try {
@@ -640,5 +763,6 @@ PluginManager.registerButtonListener({
     }
     // Toolbar (showType:1) opens the Manager; cards stay on top for live preview.
     blog('[btn] toolbar pressed');
+    if (e && e.id === TOOLBAR_BTN) managerShown();
   },
 });

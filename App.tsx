@@ -64,19 +64,42 @@ import {
   setDrawing,
   Note,
 } from './src/store';
-import {ICONS} from './src/icons';
+import {ICONS, STICKY_ICON} from './src/icons';
 import {dp, T, CARD_H, ACTION_H, BLACK, WHITE, DOTTED} from './src/dimens';
-import {insertIntoNote, insertInkIntoNote} from './src/tonote';
+import {insertIntoNote, insertInkIntoNote, pasteNote} from './src/tonote';
 
 const FONT_KEYS: FontKey[] = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
 /** Breathing room above the first card — counted out of the page arithmetic. */
 const LIST_PAD = dp(14);
 const KOFI_QR = require('./assets/kofi-qr.png');
+const STICKY_PNG = require('./assets/sticky-glyph.png'); // transparent: tintColor colours its lines only
+
+/** A note's icon: a glyph, or the plugin's own sticky note (drawn from its icon). */
+const NoteIcon = ({icon, style, on}: {icon: string; style: any; on?: boolean}) => {
+  if (icon !== STICKY_ICON) return <Text style={style}>{icon}</Text>;
+  const fs = (StyleSheet.flatten(style)?.fontSize as number) || 24;
+  return (
+    <Image
+      source={STICKY_PNG}
+      style={{width: fs * 1.25, height: fs * 1.25, tintColor: on ? WHITE : BLACK}}
+      resizeMode="contain"
+    />
+  );
+};
+
+/**
+ * What a list or a header shows as the title. A handwritten note with no
+ * title shows none: its ink says what it is, "Untitled" everywhere would not.
+ */
+function shownTitle(note: Note): string {
+  return note.kind === 'ink' && !note.body.trim() ? '' : noteTitle(note);
+}
 
 declare const global: {
   __ssnEnableOverlay?: () => Promise<boolean>;
   __ssnRestoreOverlay?: () => Promise<void>;
   __ssnSyncCards?: () => Promise<void>;
+  __ssnManagerClosed?: () => void;
 };
 
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -106,6 +129,7 @@ function toast(msg: string) {
 }
 
 function closeView() {
+  global.__ssnManagerClosed?.();
   PluginManager.closePluginView().catch(() => {});
   // Bring the floating post-its + bubble back now the Manager is gone.
   global.__ssnRestoreOverlay?.();
@@ -168,6 +192,8 @@ const App = () => {
 
   useEffect(() => {
     initStore().then(() => setReady(true));
+    // Pen ink off while the Manager shows: index.js, when it is really opened
+    // (this component also mounts for a headless lasso, with no Manager).
     const offStore = subscribe(opts => {
       rerender();
       // An edit typed IN a floating card needs no card sync — the native
@@ -179,6 +205,7 @@ const App = () => {
     // not just our ✕ — bring the floating post-its + bubble back.
     return () => {
       offStore();
+      global.__ssnManagerClosed?.();
       global.__ssnRestoreOverlay?.();
     };
   }, [rerender]);
@@ -205,7 +232,11 @@ const Manager = () => {
 
   const q = query.trim().toLowerCase();
   const shown = notes.filter(
-    n => (q ? n.body.toLowerCase().includes(q) : true) && filterPass(n, filter),
+    n =>
+      (q
+        ? n.body.toLowerCase().includes(q) ||
+          (n.labels || []).some(l => l.toLowerCase().includes(q))
+        : true) && filterPass(n, filter),
   );
 
   // listH is the container INCLUDING its padding, and a page always reserves
@@ -311,7 +342,7 @@ const Manager = () => {
                   key={ic}
                   style={styles.pickIcon}
                   onPress={() => newNote(ic)}>
-                  <Text style={styles.pickIconTxt}>{ic}</Text>
+                  <NoteIcon icon={ic} style={styles.pickIconTxt} />
                 </TouchableOpacity>
               ))}
             </View>
@@ -322,7 +353,7 @@ const Manager = () => {
             onLayout={e => setListH(e.nativeEvent.layout.height)}>
             {shown.length === 0 ? (
               <Text style={styles.empty}>
-                {q ? 'No matching notes.' : 'No notes yet — tap New note.'}
+                {q ? 'No matching notes.' : 'No notes yet — tap ＋ New StickyNote.'}
               </Text>
             ) : (
               pageNotes.map(n => (
@@ -514,14 +545,16 @@ const NoteCard = ({
       onLongPress={onOpen}>
       <View style={styles.cardHead}>
         <View style={[styles.cardIcon, note.open && styles.cardIconOn]}>
-          <Text style={[styles.cardIconTxt, note.open && styles.cardIconTxtOn]}>
-            {note.icon}
-          </Text>
+          <NoteIcon
+            icon={note.icon}
+            on={note.open}
+            style={[styles.cardIconTxt, note.open && styles.cardIconTxtOn]}
+          />
         </View>
         <Text
           style={[styles.cardTitle, {fontFamily: rnFamily()}]}
           numberOfLines={1}>
-          {noteTitle(note)}
+          {shownTitle(note)}
         </Text>
       </View>
       {note.drawing?.png || note.ink ? (
@@ -555,17 +588,16 @@ const NoteCard = ({
         <View style={styles.cardActions}>
           <CardBtn label={note.open ? 'Hide' : 'Show on screen'} onPress={toggleOpen} />
           <CardBtn label="Edit" onPress={onOpen} />
-          {(note.kind !== 'ink' || !!note.ink) && (
-            <CardBtn label="Insert in note" onPress={() => toNote(note)} />
+          {(note.kind !== 'ink' || hasInk(note)) && (
+            <CardBtn label="Put on page" onPress={() => toNote(note)} />
           )}
           {!!note.sourceFile && (
             <CardBtn label="Go to source" onPress={() => goToSource(note)} />
           )}
           <View style={styles.grow} />
-          <CardBtn
-            label="Delete"
-            danger
-            onPress={() => {
+          <ConfirmBtn
+            Btn={CardBtn}
+            onConfirm={() => {
               remove(note.id);
               onGone();
             }}
@@ -573,6 +605,32 @@ const NoteCard = ({
         </View>
       )}
     </TouchableOpacity>
+  );
+};
+
+/**
+ * Delete, in two taps: the first turns it into "Tap again to delete" for a
+ * few seconds. A deleted note takes its handwriting with it.
+ */
+const ConfirmBtn = ({
+  Btn,
+  onConfirm,
+}: {
+  Btn: (p: {label: string; onPress: () => void; danger?: boolean}) => React.ReactElement;
+  onConfirm: () => void;
+}) => {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <Btn
+      label={armed ? 'Tap again to delete' : 'Delete'}
+      danger
+      onPress={() => (armed ? onConfirm() : setArmed(true))}
+    />
   );
 };
 
@@ -710,7 +768,9 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
   const suggestions = allLabels().filter(l => !labels.includes(l)).slice(0, 8);
   const source = fmtSource(note);
   // A capture AND a drawing share the room the handwriting borrows from the editor.
-  const pics = [note.ink, note.drawing?.png ? note.drawing : undefined].filter(Boolean) as InkPic[];
+  // (A 3.0 capture is shown through its drawing: its own image would be a duplicate.)
+  const capture = note.ink && !note.ink.inDrawing ? note.ink : undefined;
+  const pics = [capture, note.drawing?.png ? note.drawing : undefined].filter(Boolean) as InkPic[];
   const inkH = pics.length > 1 ? INK_DETAIL_H / 2 : INK_DETAIL_H;
   const inkTaken = pics.reduce((t, p) => t + inkSize(p, inkH).height + dp(30), 0);
 
@@ -732,10 +792,10 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
           <TouchableOpacity
             style={styles.noteIcon}
             onPress={() => setPickIcon(p => !p)}>
-            <Text style={styles.noteIconTxt}>{note.icon}</Text>
+            <NoteIcon icon={note.icon} style={styles.noteIconTxt} />
           </TouchableOpacity>
           <Text style={[styles.noteTitle, {fontFamily: rnFamily()}]} numberOfLines={1}>
-            {noteTitle(note)}
+            {shownTitle(note)}
           </Text>
           <View style={styles.grow} />
           <Text style={styles.metaTxt}>{fmtWhen(note.updatedAt)}</Text>
@@ -752,36 +812,70 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
                   update(note.id, {icon: ic});
                   setPickIcon(false);
                 }}>
-                <Text style={styles.pickIconTxt}>{ic}</Text>
+                <NoteIcon icon={ic} style={styles.pickIconTxt} />
               </TouchableOpacity>
             ))}
           </View>
         )}
 
-        {!!note.ink && (
+        {!!capture && (
           <>
             <Text style={styles.fieldLabel}>Handwriting</Text>
-            <InkImage ink={note.ink} maxH={inkH} />
+            <InkImage ink={capture} maxH={inkH} />
           </>
+        )}
+        {note.kind === 'ink' && !note.drawing?.png && (
+          <View style={styles.row}>
+            <Text style={styles.fieldLabel}>Handwriting</Text>
+            <View style={styles.grow} />
+            <TouchableOpacity style={styles.drawDel} onPress={() => writeOnCard(note)}>
+              <Text style={styles.chipTxt}>✎ Write</Text>
+            </TouchableOpacity>
+          </View>
         )}
         {!!note.drawing?.png && (
           <>
             <View style={styles.row}>
-              <Text style={styles.fieldLabel}>Drawing</Text>
+              <Text style={styles.fieldLabel}>
+                {note.kind === 'ink' ? 'Handwriting' : 'Written in the card'}
+              </Text>
               <View style={styles.grow} />
-              <TouchableOpacity
+              <TouchableOpacity style={styles.drawDel} onPress={() => writeOnCard(note)}>
+                <Text style={styles.chipTxt}>✎ Write</Text>
+              </TouchableOpacity>
+              {note.kind !== 'ink' && <TouchableOpacity
                 style={styles.drawDel}
                 onPress={() => {
                   setDrawing(note.id, undefined);
                   syncCardsNow(); // the card drops its drawing too
                 }}>
-                <Text style={styles.chipTxt}>Delete drawing</Text>
-              </TouchableOpacity>
+                <Text style={styles.chipTxt}>Delete it</Text>
+              </TouchableOpacity>}
             </View>
-            <InkImage ink={note.drawing} maxH={inkH} />
+            <TouchableOpacity onPress={() => writeOnCard(note)}>
+              <InkImage ink={note.drawing} maxH={inkH} />
+            </TouchableOpacity>
           </>
         )}
 
+        {note.kind === 'ink' && (
+          <>
+            <Text style={styles.fieldLabel}>Title</Text>
+            <TextInput
+              style={[styles.titleInput, {fontFamily: rnFamily()}]}
+              placeholder="Optional — shown on the card and in the list"
+              placeholderTextColor={DOTTED}
+              value={draft}
+              onChangeText={txt => {
+                const t = txt.replace(/\n/g, ' ');
+                mine.current = t;
+                setDraft(t);
+                update(note.id, {body: t}, {quiet: true});
+                syncCardsSoon();
+              }}
+            />
+          </>
+        )}
         {note.kind !== 'ink' && <Text style={styles.fieldLabel}>Text</Text>}
         {note.kind !== 'ink' && <TextInput
           style={[
@@ -849,22 +943,24 @@ const NoteScreen = ({note, onBack}: {note: Note; onBack: () => void}) => {
         <View style={styles.actionBar}>
           <BarBtn label="Done" strong onPress={done} />
           {note.kind !== 'ink' && <BarBtn label="Copy" onPress={copy} />}
-          {note.ink ? (
+          {hasInk(note) ? (
             <>
-              <BarBtn label="Insert ink" onPress={() => toNote(note, 'ink')} />
-              {!!draft.trim() && (
-                <BarBtn label="Insert text" onPress={() => toNote(note, 'text')} />
+              <BarBtn
+                label={draft.trim() && note.kind !== 'ink' ? 'Put ink on page' : 'Put on page'}
+                onPress={() => toNote(note, 'ink')}
+              />
+              {!!draft.trim() && note.kind !== 'ink' && (
+                <BarBtn label="Put text on page" onPress={() => toNote(note, 'text')} />
               )}
             </>
           ) : note.kind !== 'ink' ? (
-            <BarBtn label="Insert in note" onPress={() => toNote(note)} />
+            <BarBtn label="Put on page" onPress={() => toNote(note)} />
           ) : null}
           {note.kind !== 'ink' && <BarBtn label="Export" onPress={() => exportNote(note)} />}
           <View style={styles.grow} />
-          <BarBtn
-            label="Delete"
-            danger
-            onPress={() => {
+          <ConfirmBtn
+            Btn={BarBtn}
+            onConfirm={() => {
               remove(note.id);
               done();
             }}
@@ -1166,7 +1262,7 @@ const SettingsScreen = ({
 
         <SettingRow
           label="Mode"
-          hint="New sticky notes and lasso captures: written with the pen, or typed and recognised">
+          hint="New sticky notes and lasso captures: written with the pen, or typed and recognised. Existing notes keep their kind; PDF text is always text.">
           {MODE_OPTS.map(o => (
             <Opt
               key={o.key}
@@ -1287,13 +1383,54 @@ const PermissionBanner = () => {
  * Drop this sticky's text onto the note page underneath, as an editable text
  * box, and leave the Manager so the user lands on the result.
  */
-async function toNote(note: Note, what: 'ink' | 'text' = note.ink ? 'ink' : 'text') {
-  const r = what === 'ink' ? await insertInkIntoNote(note) : await insertIntoNote(note);
+/**
+ * Write on a note from the Manager: on its own sticky, the one place the pen
+ * is recorded, floated if it isn't and put in writing over the Manager. ✓ on
+ * it saves, and the note page shows the result.
+ */
+async function writeOnCard(note: Note) {
+  if (!note.open) {
+    if (getAll().filter(n => n.open).length >= getMaxCards()) {
+      toast(`Max ${getMaxCards()} sticky notes on screen — close one first`);
+      return;
+    }
+    placeForOpen(note.id);
+    setOpen(note.id, true);
+  }
+  try {
+    await global.__ssnSyncCards?.();
+    await StickyNative?.bringToFront(note.id);
+    if (await StickyNative?.beginWriting(note.id)) toast('Write on the sticky note · ✓ to finish');
+  } catch {}
+}
+
+/** Handwriting to put on the page: a capture, or what was written in the card. */
+function hasInk(note: Note): boolean {
+  return !!note.ink || !!note.drawing;
+}
+
+async function toNote(note: Note, what?: 'ink' | 'text') {
+  // No choice made: the same as the card's "Put on page".
+  let r: Awaited<ReturnType<typeof pasteNote>>;
+  try {
+    r =
+      what === 'ink'
+        ? {...(await insertInkIntoNote(note)), what: 'Handwriting'}
+        : what === 'text'
+          ? {...(await insertIntoNote(note)), what: 'Text'}
+          : await pasteNote(note);
+  } catch (e) {
+    r = {ok: false, why: (e as Error)?.message, what: ''};
+  }
   if (!r.ok) {
-    toast(r.why || 'Insert failed');
+    toast(r.why || 'Could not put it on the page');
     return;
   }
-  toast(what === 'ink' ? 'Handwriting inserted in the note' : 'Inserted in the note');
+  toast(
+    r.partial
+      ? `Only part of the handwriting put on the page: ${r.partial}`
+      : `${r.what} put on the page`,
+  );
   closeView();
 }
 
@@ -1595,6 +1732,15 @@ const styles = StyleSheet.create({
     marginRight: dp(12),
   },
   noteIconTxt: {fontSize: T.fsNote, color: BLACK},
+  titleInput: {
+    borderWidth: 1,
+    borderColor: BLACK,
+    borderRadius: dp(6),
+    paddingHorizontal: dp(10),
+    paddingVertical: dp(8),
+    fontSize: T.fsBody,
+    color: BLACK,
+  },
   noteTitle: {fontSize: T.fsSection, fontWeight: '700', color: BLACK},
   fieldLabel: {fontSize: T.fsMeta, color: BLACK, marginTop: dp(16), marginBottom: dp(7)},
   editor: {

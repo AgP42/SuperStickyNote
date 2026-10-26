@@ -1,7 +1,7 @@
 {
   "name": "SuperStickyNote",
-  "version": "3.0.0",
-  "description": "Floating sticky quick-notes for Supernote. A launcher bubble and up to 8 draggable post-it cards float over NOTE and DOC; tap to edit with the keyboard. Notes and .txt exports live in MyStyle/Plugin/SuperStickyNote.",
+  "version": "3.1.0",
+  "description": "Floating sticky notes for Supernote: typed or handwritten post-its over notebooks and documents, lasso and PDF capture, and back onto the page as text or real strokes.",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
